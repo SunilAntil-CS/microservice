@@ -1,0 +1,28 @@
+# =============================================================================
+# REVISION – Spring Profiles (application-{profile}.yml)
+# =============================================================================
+# This file is loaded only when profile "local" is active (e.g. -Dspring-boot.run.profiles=local).
+# REVISION: Profiles let you have environment-specific config. Spring loads application.yml
+# first, then application-{profile}.yml for the active profile(s). Later values override earlier ones.
+
+# --- Local profile: run without Docker (H2 + no Kafka) ---
+
+spring:
+  datasource:
+    # REVISION: H2 is an in-memory Java DB. jdbc:h2:mem:name = in-memory DB named "name".
+    # DB_CLOSE_DELAY=-1 keeps the DB alive until the JVM exits (default would close when last connection closes).
+    url: jdbc:h2:mem:vnfm_db;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      # REVISION: create-drop = create schema when EntityManagerFactory starts, DROP when it closes.
+      # Good for local/dev (no DB to set up); never use in production (data loss on restart).
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+  # REVISION: spring.autoconfigure.exclude disables specific auto-configuration classes.
+  # Here we exclude Kafka so the app starts even when no Kafka broker is running.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration

@@ -1,0 +1,22 @@
+# =============================================================================
+# REVISION – Test profile (application-test.yml)
+# =============================================================================
+# Loaded when @ActiveProfiles("test") is present on a test class. Ensures tests don't depend
+# on real PostgreSQL or Kafka: use in-memory H2 and disable Kafka auto-config.
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    # REVISION: In tests, create-drop gives a fresh schema per application context. Tests stay isolated.
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+  kafka:
+    bootstrap-servers: localhost:9092
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration

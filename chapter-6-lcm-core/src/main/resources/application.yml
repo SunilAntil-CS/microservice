@@ -1,0 +1,73 @@
+# =============================================================================
+# REVISION – Spring Boot configuration (application.yml)
+# =============================================================================
+# Properties here are bound to Spring's Environment and used by auto-configuration.
+# Naming: spring.datasource.*, spring.jpa.* follow Spring Boot's relaxed binding.
+
+# --- Server ---
+# REVISION: Spring Boot embeds a servlet container (Tomcat by default). server.port sets the HTTP port.
+server:
+  port: 8080
+
+# --- DataSource (JPA / JDBC) ---
+# REVISION: spring.datasource.* creates a DataSource bean. Used by:
+#   - JPA: EntityManagerFactory / Hibernate need a DataSource to connect to the DB
+#   - JDBC: JdbcTemplate (if you use it) also uses this DataSource
+# Spring Boot auto-configures a DataSource when spring-boot-starter-data-jpa or
+# spring-boot-starter-jdbc is on the classpath and these properties are set.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/vnfm_db
+    username: vnfm
+    password: vnfm123
+    driver-class-name: org.postgresql.Driver
+
+  # --- JPA / Hibernate ---
+  # REVISION: spring.jpa.* configures the JPA provider (here Hibernate). JPA = Java Persistence API;
+  # Hibernate is the implementation. Entities are @Entity classes; they map to DB tables.
+  # Spring Data JPA creates a proxy implementation for interfaces extending JpaRepository.
+  jpa:
+    hibernate:
+      # REVISION – ddl-auto: controls schema generation.
+      #   none / validate: do NOT change DB schema. validate = check that @Entity mappings match
+      #     existing tables; fail at startup if not (safe for production).
+      #   update: add new columns/tables if needed; do not drop (risky in prod).
+      #   create / create-drop: create schema; create-drop also drops at shutdown (dev/test only).
+      ddl-auto: validate
+    # REVISION: show-sql logs every SQL statement Hibernate runs (useful for debugging).
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        # REVISION: dialect tells Hibernate which SQL dialect to use (e.g. LIMIT vs OFFSET/FETCH).
+        # Each DB has small differences; the dialect generates correct SQL for that DB.
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+
+  # --- Kafka ---
+  # REVISION: spring.kafka.bootstrap-servers is used to create KafkaProducer/KafkaConsumer config.
+  # KafkaTemplate (producer) and @KafkaListener (consumer) use this to connect to the broker.
+  kafka:
+    bootstrap-servers: localhost:9092
+    # Producer config for OutboxForwarder / KafkaMessagePublisher (outbox pattern).
+    # Key = messageId (string), value = JSON payload (string).
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Optional: ensure broker acks (default all).
+      acks: all
+      retries: 3
+
+# --- LCM Outbox forwarder ---
+# STUDY NOTE: Scheduled job runs every fixedDelay ms after previous run completes.
+# So "5000" = run every 5 seconds (after the last forward() finished).
+lcm:
+  outbox:
+    forwarder:
+      fixed-delay: 5000
+  # --- Saga timeouts ---
+  # Per-step timeout: if no reply by executeAt, TimeoutScheduler triggers compensation.
+  saga:
+    step-timeout-seconds: 120
+    timeout-scheduler:
+      fixed-delay: 5000
