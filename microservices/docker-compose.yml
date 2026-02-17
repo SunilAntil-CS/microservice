@@ -1,0 +1,25 @@
+# Local end-to-end run: Service Discovery via Compose network (service name = hostname)
+# NFVO calls http://vnfm:8080; no Kubernetes required.
+services:
+  vnfm:
+    build: ./ch3-vnfm
+    image: vnfm:1.0.0
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  nfvo:
+    build: ./ch3-nfvo
+    image: nfvo:1.0.0
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      vnfm:
+        condition: service_healthy

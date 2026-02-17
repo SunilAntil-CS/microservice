@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfvo
+  labels:
+    app: nfvo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nfvo
+  template:
+    metadata:
+      labels:
+        app: nfvo
+    spec:
+      containers:
+        - name: nfvo
+          image: nfvo:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: VNFM_SERVICE_URL
+              value: "http://vnfm-service"
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

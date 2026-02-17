@@ -3,7 +3,6 @@ package com.vnfm.lcm.infrastructure.saga;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vnfm.lcm.domain.DomainEvent;
-import com.vnfm.lcm.domain.model.OpOccState;
 import com.vnfm.lcm.domain.model.VnfLcmOpOccAggregate;
 import com.vnfm.lcm.infrastructure.eventstore.EventStore;
 import com.vnfm.lcm.infrastructure.outbox.OutboxMessage;

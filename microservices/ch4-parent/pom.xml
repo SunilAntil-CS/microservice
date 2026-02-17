@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SAGA PARENT (saga-parent) - Eventuate Tram Saga Orchestration
+  ---------------------------------------------------------------------------
+  Build order: saga-common -> order-service, kitchen-service, accounting-service.
+  Usage: from microservices/ run:
+    mvn -f ch4-parent/pom.xml clean install
+  Eventuate Tram 0.19/0.30 require Spring Boot 2.x (javax); use 2.7 for compatibility.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.7.18</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.telecom.saga</groupId>
+    <artifactId>ch4-parent</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>saga-parent</name>
+    <description>Saga Orchestration (Eventuate Tram) - Parent</description>
+
+    <properties>
+        <java.version>17</java.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <!-- Eventuate Tram: Sagas 0.19, Core 0.30 (Kafka + JDBC) -->
+        <eventuate-tram-sagas.version>0.19.0.RELEASE</eventuate-tram-sagas.version>
+        <eventuate-tram-core.version>0.30.0.RELEASE</eventuate-tram-core.version>
+    </properties>
+
+    <modules>
+        <module>../ch4-saga-common</module>
+        <module>../ch4-order-service</module>
+        <module>../ch4-kitchen-service</module>
+        <module>../ch4-accounting-service</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.telecom.saga</groupId>
+                <artifactId>ch4-saga-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <!-- Eventuate Tram Sagas (orchestrator + participant) -->
+            <dependency>
+                <groupId>io.eventuate.tram.sagas</groupId>
+                <artifactId>eventuate-tram-sagas-spring-orchestration-simple-dsl</artifactId>
+                <version>${eventuate-tram-sagas.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.eventuate.tram.sagas</groupId>
+                <artifactId>eventuate-tram-sagas-spring-orchestration</artifactId>
+                <version>${eventuate-tram-sagas.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.eventuate.tram.core</groupId>
+                <artifactId>eventuate-tram-spring-jdbc-kafka</artifactId>
+                <version>${eventuate-tram-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.eventuate.tram.core</groupId>
+                <artifactId>eventuate-tram-commands</artifactId>
+                <version>${eventuate-tram-core.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>

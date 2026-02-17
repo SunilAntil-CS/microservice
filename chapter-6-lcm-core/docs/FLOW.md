@@ -90,20 +90,20 @@ The **event store** (`com.vnfm.lcm.infrastructure.eventstore`) is where domain e
 ### Interface and implementation
 
 - **`EventStore`** – Interface with:
-  - **`saveEvents(UUID aggregateId, List<DomainEvent> events, int expectedVersion)`** – Appends events for an aggregate. Fails with `OptimisticLockingException` if the aggregate’s current version in the store is not equal to `expectedVersion`.
-  - **`loadEvents(UUID aggregateId)`** – Returns all events for the aggregate in **version order** (ascending), so they can be replayed to rebuild state (e.g. `VnfAggregate.from(events)`).
-  - **`getLatestSnapshot(UUID aggregateId)`** – Returns the latest snapshot for the aggregate, if any (see below).
+  - **`saveEvents(UUID aggregateId, String aggregateType, List<DomainEvent> events, int expectedVersion)`** – Appends events for an aggregate. `aggregateType` is `"VNF"` or `"OP_OCC"`. Fails with `OptimisticLockingException` if the aggregate's current version in the store is not equal to `expectedVersion`.
+  - **`loadEvents(UUID aggregateId, String aggregateType)`** – Returns all events for the aggregate in **version order** (ascending), so they can be replayed to rebuild state (e.g. `VnfAggregate.from(events)` or `VnfLcmOpOccAggregate.from(events)`).
+  - **`getLatestSnapshot(UUID aggregateId, String aggregateType)`** – Returns the latest snapshot for the aggregate, if any (see below).
 
 - **`JdbcEventStore`** – JPA-based implementation. Uses **`EventEntity`** (mapped to table `events`) and **`SnapshotEntity`** (table `snapshots`). Events are serialized to JSON (with `event_type` and payload) and stored in the `events` table. Each row has `event_id` (unique), `aggregate_id`, `version`, `event_type`, `payload`, and `event_timestamp`.
 
 ### How events are persisted
 
 1. The application produces new events (e.g. from `VnfAggregate.process(command)`).
-2. It calls **`saveEvents(aggregateId, events, expectedVersion)`**, where `expectedVersion` is the aggregate’s version *before* these new events (e.g. 0 for the first save, 2 after two events are already stored).
+2. It calls **`saveEvents(aggregateId, aggregateType, events, expectedVersion)`**, where `expectedVersion` is the aggregate’s version *before* these new events (e.g. 0 for the first save, 2 after two events are already stored).
 3. The store **checks the current max version** for that aggregate in the DB. If `maxVersion != expectedVersion`, it throws **`OptimisticLockingException`** and does not insert (concurrent or out-of-order write).
 4. If the check passes, it **inserts each event** with version `expectedVersion + 1`, `expectedVersion + 2`, … and serializes each event (e.g. to JSON) into the `payload` column.
 
-Loading replays the stream: **`loadEvents(aggregateId)`** returns rows ordered by `version`, and the client deserializes each payload back into a `DomainEvent` and can apply them (e.g. `VnfAggregate.from(events)`).
+Loading replays the stream: **`loadEvents(aggregateId, aggregateType)`** returns rows ordered by `version`, and the client deserializes each payload back into a `DomainEvent` and can apply them (e.g. `VnfAggregate.from(events)` or `VnfLcmOpOccAggregate.from(events)`). The **`events`** table includes an **`aggregate_type`** column (`VNF` or `OP_OCC`) to distinguish streams.
 
 ### Role of version for optimistic locking
 
@@ -295,3 +295,54 @@ The **northbound REST API** exposes VNF lifecycle operations. All endpoints unde
 - **VnfStateResponse** – vnfId, state, version, vimResourceId, ipAddress (from event-store projection).
 - **VnfSummary** – vnfId, state (for list).
 - **vnf_index** – Read-side table holding known vnf_id values; populated when a VNF is created (POST). Used by GET /api/vnfs to list VNFs; state for each is then projected from the event store.
+
+---
+
+## 11. ETSI-Compliant Northbound API
+
+The **ETSI SOL002/003** compliant API is exposed under **`/vnflcm/v1`**. It implements a **two-step instantiation flow** and **operation occurrence** tracking as in the standard.
+
+### Two-step flow
+
+1. **Create VNF instance** – **POST /vnflcm/v1/vnf_instances** with optional body (vnfInstanceName, vnfInstanceDescription). The server creates a new VNF aggregate with a **VnfInstanceCreated** event (state **NOT_INSTANTIATED**), persists it, and adds the id to the **vnf_index** read-side. Returns **201 Created** with **Location: /vnflcm/v1/vnf_instances/{vnfId}** and a **VnfInstance** body.
+
+2. **Start instantiation** – **POST /vnflcm/v1/vnf_instances/{vnfId}/instantiate** with body (flavourId, instantiationLevelId, extVirtualLinks, optional requestId). The server:
+   - Verifies the VNF exists and is in NOT_INSTANTIATED state.
+   - Emits **VnfInstantiationStarted** on the VNF aggregate (state moves to INSTANTIATING).
+   - Creates an **operation occurrence** aggregate (**VnfLcmOpOccAggregate**) with state **STARTING** (event **OpOccCreated**).
+   - Starts the **saga** for instantiation (ReserveResources, etc.), passing **operationId** so the saga can update the operation occurrence on completion or failure.
+   - Returns **202 Accepted** with **Location: /vnflcm/v1/vnf_lcm_op_occs/{operationId}** (no body).
+
+The client can poll **GET /vnflcm/v1/vnf_lcm_op_occs/{opId}** to see the operation state (STARTING, PROCESSING, COMPLETED, FAILED).
+
+### Operation occurrences
+
+- **VnfLcmOpOccAggregate** – Event-sourced aggregate for each LCM operation (e.g. INSTANTIATE, TERMINATE). Events: **OpOccCreated**, **OpOccUpdated**, **OpOccCompleted**, **OpOccFailed**. State values: STARTING, PROCESSING, COMPLETED, FAILED, ROLLING_BACK.
+- Stored in the same **events** table with **aggregate_type = 'OP_OCC'** (aggregate_id = operation occurrence UUID).
+- When the **SagaOrchestrator** completes or fails an instantiation saga, it loads the corresponding **VnfLcmOpOccAggregate** (using the **operation_id** stored on the saga instance), emits **OpOccCompleted** or **OpOccFailed**, and saves the event in the same transaction as the saga update.
+
+### Endpoints (ETSI)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| **POST** | /vnflcm/v1/vnf_instances | Create a VNF instance. Body: **CreateVnfInstanceRequest** (optional vnfInstanceName, vnfInstanceDescription). Returns **201** with **Location** and **VnfInstance**. |
+| **POST** | /vnflcm/v1/vnf_instances/{vnfId}/instantiate | Start instantiation. Body: **InstantiateVnfRequestLcm** (flavourId, instantiationLevelId, extVirtualLinks, optional requestId). Header **X-Request-ID** for idempotency. Returns **202** with **Location: /vnflcm/v1/vnf_lcm_op_occs/{opId}**. |
+| **GET** | /vnflcm/v1/vnf_instances/{vnfId} | Return **VnfInstance** (id, instantiationState, vnfInstanceName, vimResourceId, ipAddress, etc.). |
+| **GET** | /vnflcm/v1/vnf_instances | List all **VnfInstance** (from vnf_index + event-store projection). |
+| **GET** | /vnflcm/v1/vnf_lcm_op_occs/{opId} | Return **VnfLcmOpOcc** (id, operation, state, vnfInstanceId, startTime, endTime, error). |
+
+### How internal patterns support this flow
+
+- **Event sourcing** – Both **VnfAggregate** and **VnfLcmOpOccAggregate** use the same **EventStore**; **aggregate_type** distinguishes VNF vs OP_OCC streams.
+- **Saga orchestration** – **SagaOrchestrator.startInstantiateSaga(vnfId, operationId, resources)** stores **operation_id** on the saga instance. On **handleReply** (success or failure), the orchestrator updates the operation occurrence aggregate (OpOccCompleted / OpOccFailed) in the same transactional boundary where applicable.
+- **Outbox** – Unchanged; saga commands (e.g. ReserveResources) are still written to the outbox and forwarded to Kafka.
+- **Persistent timeouts** – Unchanged; saga steps still have **saga_timeouts** rows; timeouts are tied to the saga (and thus to the operation ID).
+- **Idempotency** – **IdempotencyFilter** applies to **POST /vnflcm/v1/vnf_instances** and **POST /vnflcm/v1/vnf_instances/{vnfId}/instantiate**. **X-Request-ID** (or requestId in body for instantiate) is used. For **202** responses, the cached value includes **status** and **Location** header so duplicate requests receive the same 202 and Location.
+
+### Mapping of ETSI resources to aggregates
+
+| ETSI resource | Aggregate / store |
+|---------------|-------------------|
+| VNF Instance | **VnfAggregate** (events with aggregate_type = VNF); first event **VnfInstanceCreated** for creation. |
+| LCM Operation Occurrence | **VnfLcmOpOccAggregate** (events with aggregate_type = OP_OCC). |
+| List VNF Instances | **vnf_index** read-side + event-store projection per vnfId. |

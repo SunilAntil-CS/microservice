@@ -1,0 +1,28 @@
+# ------------------------------------------------------------------------------
+# MODULE 2: Kubernetes Service = "Server-Side Service Discovery"
+# ------------------------------------------------------------------------------
+# This YAML is the "database" for discovery: it tells Kubernetes DNS (CoreDNS)
+# that the name "vnfm-service" exists. NFVO calls http://vnfm-service; it never
+# uses a Pod IP.
+#
+# FLOW:
+# 1. NFVO does client.get().uri("http://vnfm-service/vnf_instances/...")
+# 2. Container's DNS resolver (pointing to CoreDNS) looks up "vnfm-service"
+# 3. CoreDNS returns the Service's ClusterIP (e.g. 10.96.0.10)
+# 4. Kube-Proxy on the node intercepts traffic to that IP and forwards to one
+#    of the healthy Pods matching selector app=vnfm (round-robin / random)
+# ------------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: vnfm-service   # <-- THIS IS THE DNS NAME (e.g. http://vnfm-service)
+  labels:
+    app: vnfm
+spec:
+  ports:
+    - port: 80          # NFVO calls port 80 (or http://vnfm-service with default port 80)
+      targetPort: 8080  # Traffic is forwarded to the container port 8080 (our Spring Boot app)
+      protocol: TCP
+      name: http
+  selector:
+    app: vnfm           # Selects all Pods with label app=vnfm (from vnfm-deployment.yml)

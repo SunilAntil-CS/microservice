@@ -6,7 +6,6 @@ import com.vnfm.lcm.api.dto.VnfInstance;
 import com.vnfm.lcm.domain.DomainEvent;
 import com.vnfm.lcm.domain.command.InstantiateVnfCommand;
 import com.vnfm.lcm.domain.event.VnfInstanceCreated;
-import com.vnfm.lcm.domain.event.VnfInstantiationStarted;
 import com.vnfm.lcm.domain.model.LcmOperationType;
 import com.vnfm.lcm.domain.model.VnfAggregate;
 import com.vnfm.lcm.domain.model.VnfLcmOpOccAggregate;

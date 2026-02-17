@@ -1,0 +1,13 @@
+{
+  "folders": [
+    {
+      "path": ".",
+      "name": "chapter5-vnfm"
+    }
+  ],
+  "settings": {
+    "java.configuration.updateBuildConfiguration": "automatic",
+    "java.import.maven.offline.enabled": false,
+    "java.project.importOnFirstTimeOpen": "automatic"
+  }
+}

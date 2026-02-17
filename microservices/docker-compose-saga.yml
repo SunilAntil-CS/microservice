@@ -1,0 +1,81 @@
+# =============================================================================
+# Saga Orchestration Stack (Eventuate Tram) - Food Ordering / Telecom
+# =============================================================================
+# Run: docker-compose -f docker-compose-saga.yml up -d
+# Used by: order-service, kitchen-service, accounting-service (and Eventuate CDC).
+# Database-per-service: order_db, kitchen_db, accounting_db.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Apache Kafka (message broker for Eventuate Tram command/reply channels)
+  # ---------------------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    hostname: zookeeper
+    container_name: saga-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    container_name: saga-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  # ---------------------------------------------------------------------------
+  # MySQL - Database-per-service (one server, three databases)
+  # ---------------------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    hostname: mysql
+    container_name: saga-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: order_db
+      MYSQL_USER: saga_user
+      MYSQL_PASSWORD: saga_pass
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    volumes:
+      - saga-mysql-data:/var/lib/mysql
+      - ./saga-infra/init-mysql.sql:/docker-entrypoint-initdb.d/01-init-databases.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Optional: Eventuate Tram CDC Service
+  # ---------------------------------------------------------------------------
+  # Uncomment to run CDC (reads message table from DB and publishes to Kafka).
+  # Image/version may vary; see Eventuate docs. For local dev, Tram can use
+  # polling from the same DB as the application.
+  # cdc-service:
+  #   image: eventuateio/eventuate-tram-cdc-mysql:0.25.0.RELEASE
+  #   ...
+
+volumes:
+  saga-mysql-data:

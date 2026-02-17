@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CHAPTER 4 MODULE 1: SAGA COMMON MODULE
+  --------------------------------------
+  This module holds the "contract" shared between the Saga Orchestrator (Order Service)
+  and Participants (Kitchen Service, and in a full system: Accounting Service).
+  CONCEPT: In Orchestration-style Sagas, the orchestrator sends Commands and expects
+  Replies. Both sides must agree on the same DTOs to avoid coupling to internal models.
+  No Spring or runtime dependencies—plain POJOs for maximum reuse and testability.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.telecom.saga</groupId>
+        <artifactId>ch4-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../ch4-parent/pom.xml</relativePath>
+    </parent>
+
+    <groupId>com.telecom.saga</groupId>
+    <artifactId>ch4-saga-common</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>ch4-saga-common</name>
+    <description>Shared Commands and Replies for Chapter 4 Saga (Order ↔ Kitchen)</description>
+
+    <properties>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+    </properties>
+
+    <dependencies>
+        <!-- Eventuate Tram: Command marker interface (so orchestrator can send our DTOs as commands) -->
+        <dependency>
+            <groupId>io.eventuate.tram.core</groupId>
+            <artifactId>eventuate-tram-commands</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>17</source>
+                    <target>17</target>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
