@@ -1,0 +1,15 @@
+spring:
+  kafka:
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+
+policy-query:
+  kafka:
+    topic: policy-events
+    dlq-topic: policy-events-dlq
+  elasticsearch:
+    index-prefix: policy-history
+  pagination:
+    default-size: 20
+    max-size: 100
