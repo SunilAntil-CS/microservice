@@ -1,0 +1,40 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+  kafka:
+    bootstrap-servers: ${spring.embedded.kafka.brokers}
+
+vim:
+  commands-topic: vim.commands
+  replies-topic: vim.replies
+  outbox:
+    forwarder:
+      fixed-delay: 10000
+  simulator:
+    succeed: true
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      vimClient:
+        sliding-window-size: 5
+        minimum-number-of-calls: 2
+        wait-duration-in-open-state: 2s
+        failure-rate-threshold: 50
+  retry:
+    instances:
+      vimClient:
+        max-attempts: 2
+        wait-duration: 100ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2

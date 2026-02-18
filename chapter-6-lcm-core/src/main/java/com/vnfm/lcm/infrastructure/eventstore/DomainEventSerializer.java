@@ -59,8 +59,7 @@ public class DomainEventSerializer {
                         (String) p.get("vnfInstanceName"), (String) p.get("vnfInstanceDescription"),
                         version, timestamp);
                 case "VnfInstantiationStarted" -> new VnfInstantiationStarted(
-                        eventId, aggregateId,
-                        (String) p.get("vnfId"), (String) p.get("resources"),
+                        eventId, aggregateId, (String) p.get("resources"),
                         version, timestamp);
                 case "VnfInstantiated" -> new VnfInstantiated(
                         eventId, aggregateId,

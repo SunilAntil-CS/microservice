@@ -298,7 +298,59 @@ The **northbound REST API** exposes VNF lifecycle operations. All endpoints unde
 
 ---
 
-## 11. ETSI-Compliant Northbound API
+## 11. Debezium CDC
+
+**Change Data Capture (CDC)** allows the LCM to reliably publish database changes to Kafka without coupling the write path to the messaging layer. Using an **embedded Debezium engine**, the application captures row-level changes on the **`events`** and **`outbox`** tables and forwards each change to the appropriate Kafka topic. This complements the existing **OutboxForwarder** (see §5) by providing a CDC-based path: every insert or update is streamed from PostgreSQL’s transaction log to Kafka, so downstream consumers see a consistent, ordered feed of events and outbox messages.
+
+### Why Debezium CDC?
+
+- **Decoupled publishing** – The application writes only to the database (event store, outbox). A separate Debezium engine reads from the database log and publishes to Kafka. If Kafka is temporarily down, no application transaction fails; changes are replayed when the engine catches up.
+- **Single source of truth** – The database is the durable store. Kafka topics are derived from the same data via CDC, so there is no risk of the application “forgetting” to publish an event.
+- **Embedded engine** – For simplicity, the LCM uses the **embedded Debezium engine** (no separate Kafka Connect cluster). The engine runs inside the application JVM, in a dedicated thread, and is managed by Spring’s lifecycle (`@PostConstruct` to start, `@PreDestroy` to stop).
+
+### How it works
+
+1. **DebeziumListener** – A Spring component (`com.vnfm.lcm.infrastructure.debezium.DebeziumListener`) starts when the application starts (if `lcm.debezium.enabled` is `true`). It configures a Debezium **PostgreSQL connector** with:
+   - Database connection (hostname, port, user, password, dbname) from **`lcm.debezium.database`** in `application.yml`.
+   - **`table.include.list`** = `public.events,public.outbox` (configurable via **`lcm.debezium.table-include-list`**).
+   - **`plugin.name`** = `pgoutput` (PostgreSQL’s built-in logical decoding plugin; no extra install).
+   - A replication slot and publication (e.g. **`lcm_cdc_slot`**, **`lcm_cdc_pub`**) so the connector can stream changes. The database must have **logical replication** enabled (`wal_level=logical`) and, depending on setup, the publication may need to be created manually (e.g. `CREATE PUBLICATION lcm_cdc_pub FOR TABLE events, outbox;`).
+
+2. **Engine thread** – The Debezium engine runs in a **separate thread** (e.g. `debezium-cdc-engine`). It does not block the main application. On shutdown, **`@PreDestroy`** closes the engine and the executor so the JVM can exit cleanly.
+
+3. **Change events** – For each captured change (insert/update), the engine invokes a **consumer** with a JSON payload (Debezium envelope: `source`, `after`, `before`, `op`, etc.). The **DebeziumListener** parses this payload to determine:
+   - **Table name** (from `source.table`): `events` or `outbox`.
+   - **Topic and key**:
+     - **`events` table** → Kafka topic **`vnf.events`** (configurable via **`lcm.debezium.events-topic`**). Message key = **`event_id`** from the row.
+     - **`outbox` table** → Kafka topic = row’s **`destination`** column (e.g. **`vim.commands`**). Message key = **`message_id`** from the row.
+
+4. **EventPublisher** – A simple component (**`EventPublisher`**) uses **`KafkaTemplate<String, String>`** to send each change to the chosen topic. The **value** is the full Debezium JSON envelope (so consumers get metadata and the full row state). Thus, inserting a row in **`events`** results in a message on **`vnf.events`**; inserting a row in **`outbox`** results in a message on the topic specified by that row’s **`destination`** (e.g. **`vim.commands`**).
+
+### Configuration summary
+
+| Property | Description |
+|----------|-------------|
+| **lcm.debezium.enabled** | If `true`, the DebeziumListener starts the embedded engine (default: `true`). |
+| **lcm.debezium.database.*** | hostname, port, username, password, dbname for the PostgreSQL connection. |
+| **lcm.debezium.table-include-list** | Comma-separated list of tables, e.g. `public.events,public.outbox`. |
+| **lcm.debezium.events-topic** | Kafka topic for changes from the **events** table (default: **vnf.events**). |
+| **lcm.debezium.connector-name** | Connector name used for offset storage and logging. |
+
+### Relation to the Outbox pattern
+
+- **OutboxForwarder** (§5) polls the **`outbox`** table and publishes **PENDING** rows to Kafka, then marks them **SENT**. It is the primary mechanism for **commands** (e.g. ReserveResources) that must be delivered to the VIM.
+- **Debezium CDC** streams **all** changes to **`events`** and **`outbox`** (inserts and updates) to Kafka. Downstream systems can consume **`vnf.events`** for domain events and the outbox topic (e.g. **`vim.commands`**) for commands. CDC does not replace the OutboxForwarder’s status updates (PENDING → SENT); it provides an additional, log-based view of the same data. In production you may choose one path (e.g. outbox forwarder only, or CDC only for events and outbox) or both, depending on consistency and operational requirements.
+
+### Summary
+
+- **DebeziumListener** = starts the embedded Debezium engine for PostgreSQL, captures **events** and **outbox**, runs in a separate thread, managed by `@PostConstruct` / `@PreDestroy`.
+- **EventPublisher** = forwards each change to Kafka via **KafkaTemplate** (topic and key derived from table and row).
+- **Events table** → **vnf.events**; **outbox table** → topic from **destination** column (e.g. **vim.commands**).
+- Configuration under **lcm.debezium** in **application.yml**; database must support logical replication (e.g. **wal_level=logical**) and a publication for the captured tables.
+
+---
+
+## 12. ETSI-Compliant Northbound API
 
 The **ETSI SOL002/003** compliant API is exposed under **`/vnflcm/v1`**. It implements a **two-step instantiation flow** and **operation occurrence** tracking as in the standard.
 

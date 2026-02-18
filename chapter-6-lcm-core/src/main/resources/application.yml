@@ -58,16 +58,42 @@ spring:
       acks: all
       retries: 3
 
-# --- LCM Outbox forwarder ---
-# STUDY NOTE: Scheduled job runs every fixedDelay ms after previous run completes.
-# So "5000" = run every 5 seconds (after the last forward() finished).
+# --- LCM Outbox / CDC publisher toggle ---
+# lcm.publisher.mode: choose how outbox (and events) are published to Kafka.
+#   outbox-forwarder = scheduled job polls outbox table, publishes via KafkaTemplate, marks SENT (default).
+#   debezium-cdc     = embedded Debezium streams events + outbox table changes to Kafka.
+# Only one should be active to avoid duplicate outbox publishes.
 lcm:
+  publisher:
+    mode: outbox-forwarder   # or debezium-cdc
   outbox:
     forwarder:
       fixed-delay: 5000
+  # --- VIM replies (Kafka consumer) ---
+  # Topic where VIM Manager publishes replies; LCM consumes and calls SagaOrchestrator.handleReply.
+  vim:
+    replies-topic: vim.replies
   # --- Saga timeouts ---
   # Per-step timeout: if no reply by executeAt, TimeoutScheduler triggers compensation.
   saga:
     step-timeout-seconds: 120
     timeout-scheduler:
       fixed-delay: 5000
+
+  # --- Debezium CDC (embedded engine) ---
+  # Used when lcm.publisher.mode=debezium-cdc. Captures events + outbox, publishes to Kafka.
+  debezium:
+    enabled: true
+    # PostgreSQL connection (host/port parsed from spring.datasource.url or set explicitly)
+    database:
+      hostname: localhost
+      port: 5432
+      username: vnfm
+      password: vnfm123
+      dbname: vnfm_db
+    # Tables to capture (schema.table). Events -> vnf.events; outbox -> topic from destination column.
+    table-include-list: public.events,public.outbox
+    # Topic for events table. Outbox table uses row's "destination" column as topic (e.g. vim.commands).
+    events-topic: vnf.events
+    # Connector name (used for offset storage and logging).
+    connector-name: lcm-cdc-connector

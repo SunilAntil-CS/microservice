@@ -1,8 +1,7 @@
-package com.vnfm.lcm.infrastructure.outbox;
+package com.vnfm.vimmanager.outbox;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,26 +10,12 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * STUDY NOTE – Outbox forwarder (scheduled publisher)
- * ---------------------------------------------------
- * Runs every 5 seconds, loads all PENDING messages with nextRetryAt <= now(),
- * and attempts to publish each via MessagePublisher. On success: status = SENT.
- * On failure: increment retryCount, set lastError, set nextRetryAt with exponential
- * backoff (e.g. 2^retryCount seconds) so we don't hammer the broker.
- *
- * @Scheduled: Spring's scheduling; need @EnableScheduling on the application or a config class.
- * @Transactional: each forward run is in a transaction so we can update rows consistently.
- *
- * Active only when {@code lcm.publisher.mode=outbox-forwarder} (default). Toggle with
- * {@code lcm.publisher.mode=debezium-cdc} to use Debezium CDC instead.
+ * Scheduled job: poll outbox for PENDING messages and publish to Kafka (vim.replies).
  */
 @Component
-@ConditionalOnProperty(name = "lcm.publisher.mode", havingValue = "outbox-forwarder", matchIfMissing = true)
 public class OutboxForwarder {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxForwarder.class);
-
-    /** Base delay in seconds for exponential backoff: nextRetryAt = now + baseDelaySeconds * 2^retryCount */
     private static final int BASE_DELAY_SECONDS = 2;
 
     private final OutboxRepository outboxRepository;
@@ -41,7 +26,7 @@ public class OutboxForwarder {
         this.messagePublisher = messagePublisher;
     }
 
-    @Scheduled(fixedDelayString = "${lcm.outbox.forwarder.fixed-delay:5000}")
+    @Scheduled(fixedDelayString = "${vim.outbox.forwarder.fixed-delay:5000}")
     @Transactional
     public void forward() {
         Instant now = Instant.now();
@@ -59,12 +44,10 @@ public class OutboxForwarder {
                 int retryCount = message.getRetryCount() + 1;
                 message.setRetryCount(retryCount);
                 message.setLastError(e.getMessage());
-                // STUDY NOTE: Exponential backoff – delay = BASE_DELAY_SECONDS * 2^retryCount
                 long delaySeconds = (long) (BASE_DELAY_SECONDS * Math.pow(2, retryCount));
                 message.setNextRetryAt(now.plusSeconds(delaySeconds));
                 outboxRepository.save(message);
-                log.warn("Publish failed for message id={}, retryCount={}, nextRetryAt={}: {}",
-                        message.getMessageId(), retryCount, message.getNextRetryAt(), e.getMessage());
+                log.warn("Publish failed for message id={}, retryCount={}: {}", message.getMessageId(), retryCount, e.getMessage());
             }
         }
     }
