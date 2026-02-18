@@ -1,0 +1,18 @@
+server:
+  port: 9090
+
+# Mock VIM behaviour (failure.rate, latency.min/max, error.types)
+failure:
+  rate: 0.0          # 0.0 = never fail, 1.0 = always fail
+  error-types:
+    - TIMEOUT
+    - QUOTA
+    - INTERNAL
+
+latency:
+  min-ms: 0          # Min simulated delay (ms)
+  max-ms: 100        # Max simulated delay (ms)
+
+# In-memory VM pool (total capacity)
+pool:
+  max-servers: 100

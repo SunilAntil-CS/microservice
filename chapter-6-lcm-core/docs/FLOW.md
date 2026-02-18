@@ -350,7 +350,45 @@ The **northbound REST API** exposes VNF lifecycle operations. All endpoints unde
 
 ---
 
-## 12. ETSI-Compliant Northbound API
+## 12. NFVO Simulator
+
+The **NFVO Simulator** is a separate, standalone module (`nfvo-simulator`) that acts as a **command-line client** for the LCM northbound API. It simulates an NFVO issuing VNF lifecycle operations so you can drive instantiation, termination, and queries without a real NFVO.
+
+### Purpose
+
+- **Manual testing** – Trigger LCM flows (instantiate, terminate) and inspect responses.
+- **Idempotency testing** – Send duplicate requests with the same `--requestId`; LCM returns the cached response without re-executing (see **IdempotencyFilter** and **processed_requests**).
+- **Readable output** – Prints HTTP status, Location header, and JSON body in a readable format.
+
+### Usage
+
+The simulator is a Spring Boot application with **no embedded server** (`spring.main.web-application-type: none`). It uses **RestTemplate** to call the LCM API (default base URL: `http://localhost:8080`, overridable via `--baseUrl`).
+
+**Commands:**
+
+| Command | Arguments | Description |
+|--------|-----------|-------------|
+| **instantiate** | \<vnf-type\> \<cpu\> \<memory\> [--requestId \<id\>] [--delay] | POST /api/vnfs with vnfType, cpuCores, memoryGb. Optional idempotency key; `--delay` polls status until terminal state. |
+| **terminate** | \<vnf-id\> [--requestId \<id\>] | DELETE /api/vnfs/{vnfId}. Optional idempotency key. |
+| **status** | \<vnf-id\> | GET /api/vnfs/{vnfId}/status. |
+| **list** | (none) | GET /api/vnfs. |
+
+**Examples:**
+
+```bash
+# From nfvo-simulator directory
+mvn spring-boot:run -- -q instantiate my-vnf 2 4
+java -jar target/nfvo-simulator-1.0.0-SNAPSHOT.jar instantiate my-vnf 2 4 --requestId req-123 --delay
+java -jar target/nfvo-simulator-1.0.0-SNAPSHOT.jar terminate <vnf-id> --requestId req-456
+java -jar target/nfvo-simulator-1.0.0-SNAPSHOT.jar status <vnf-id>
+java -jar target/nfvo-simulator-1.0.0-SNAPSHOT.jar list
+```
+
+Duplicate requests with the same **requestId** (header **X-Request-Id** or body/query) are handled by LCM’s **IdempotencyFilter** and return the cached response; the simulator is the right tool to verify that behaviour.
+
+---
+
+## 13. ETSI-Compliant Northbound API
 
 The **ETSI SOL002/003** compliant API is exposed under **`/vnflcm/v1`**. It implements a **two-step instantiation flow** and **operation occurrence** tracking as in the standard.
 
