@@ -47,7 +47,7 @@ public class VimRepliesConsumer {
             log.debug("Processed VIM reply sagaId={} step={} success={}", sagaId, step, success);
         } catch (Exception e) {
             log.error("Failed to process VIM reply: {}", e.getMessage(), e);
-            throw e;
+            throw new RuntimeException("Failed to process VIM reply", e);
         }
     }
 }

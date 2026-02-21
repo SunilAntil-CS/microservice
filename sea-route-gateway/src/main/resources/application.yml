@@ -1,0 +1,52 @@
+# =============================================================================
+# Sea Route Gateway - Application Configuration
+# =============================================================================
+# Properties below will be populated in later steps.
+# =============================================================================
+
+# Server
+# server:
+#   port: 8080
+
+# Spring Cloud Gateway
+# spring:
+#   cloud:
+#     gateway:
+#       routes: []
+#       default-filters: []
+
+# Eureka Client (service discovery)
+# eureka:
+#   client:
+#     service-url:
+#       defaultZone: http://localhost:8761/eureka/
+#   instance:
+#     prefer-ip-address: true
+
+# Redis (rate limiting and caching)
+# spring:
+#   data:
+#     redis:
+#       host: localhost
+#       port: 6379
+
+# Actuator
+# management:
+#   endpoints:
+#     web:
+#       exposure:
+#         include: health,info,gateway
+#   endpoint:
+#     health:
+#       show-details: when-authorized
+
+# Application name (for Eureka registration)
+# spring:
+#   application:
+#     name: sea-route-gateway
+
+# Logging: JSON output is configured in logback-spring.xml via logstash-logback-encoder.
+# logging:
+#   level:
+#     com.searoute.gateway: INFO
+#     org.springframework.cloud.gateway: INFO
