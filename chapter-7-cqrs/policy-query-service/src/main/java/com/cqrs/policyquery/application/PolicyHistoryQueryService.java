@@ -34,7 +34,7 @@ public class PolicyHistoryQueryService {
         this.properties = properties;
     }
 
-    public PolicyHistoryPage query(String subscriberId, Instant from, Instant to, String policyName, int page, int size) {
+    public PolicyHistoryPage query(String subscriberId, Instant from, Instant to, String policyName, String search, int page, int size) {
         size = Math.min(size, properties.getPagination().getMaxSize());
         Criteria criteria = new Criteria();
 
@@ -49,6 +49,9 @@ public class PolicyHistoryQueryService {
         }
         if (policyName != null && !policyName.isBlank()) {
             criteria = criteria.and(Criteria.where("policyName").is(policyName));
+        }
+        if (search != null && !search.isBlank()) {
+            criteria = criteria.and(Criteria.where("searchableText").matches(search));
         }
 
         Query query = new CriteriaQuery(criteria)

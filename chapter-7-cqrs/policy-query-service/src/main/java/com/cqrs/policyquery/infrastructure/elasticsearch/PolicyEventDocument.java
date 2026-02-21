@@ -32,16 +32,31 @@ public class PolicyEventDocument {
     @Field(type = FieldType.Long)
     private long quotaUsed;
 
+    /** Combined text for free-text / natural language search (subscriberId, policyName, allowed/denied). */
+    @Field(type = FieldType.Text)
+    private String searchableText;
+
     public PolicyEventDocument() {
     }
 
     public PolicyEventDocument(String id, String subscriberId, Instant timestamp, String policyName, boolean decision, long quotaUsed) {
+        this(id, subscriberId, timestamp, policyName, decision, quotaUsed, null);
+    }
+
+    public PolicyEventDocument(String id, String subscriberId, Instant timestamp, String policyName, boolean decision, long quotaUsed, String searchableText) {
         this.id = id;
         this.subscriberId = subscriberId;
         this.timestamp = timestamp;
         this.policyName = policyName;
         this.decision = decision;
         this.quotaUsed = quotaUsed;
+        this.searchableText = searchableText != null ? searchableText : buildSearchableText(subscriberId, policyName, decision);
+    }
+
+    private static String buildSearchableText(String subscriberId, String policyName, boolean decision) {
+        return (subscriberId != null ? subscriberId : "") + " "
+                + (policyName != null ? policyName : "") + " "
+                + (decision ? "allowed" : "denied");
     }
 
     public String getId() { return id; }
@@ -56,4 +71,6 @@ public class PolicyEventDocument {
     public void setDecision(boolean decision) { this.decision = decision; }
     public long getQuotaUsed() { return quotaUsed; }
     public void setQuotaUsed(long quotaUsed) { this.quotaUsed = quotaUsed; }
+    public String getSearchableText() { return searchableText; }
+    public void setSearchableText(String searchableText) { this.searchableText = searchableText; }
 }

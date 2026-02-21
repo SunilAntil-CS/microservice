@@ -36,7 +36,6 @@ So: one file = one environment; two files = default (Postgres + Kafka) vs local 
 You **can** put it there. It’s a global setting; it doesn’t matter which @Configuration class (or the main class) declares it.
 
 It’s in EventStoreConfig only to **group** it with @EnableJpaRepositories in one “infrastructure” config. Also, **Spring Boot enables transaction management by default** when you have spring-boot-starter-data-jpa (or -jdbc), so the annotation is often redundant.
-
 ---
 
 ### Q: What is the difference between @ComponentScan and @EntityScan?

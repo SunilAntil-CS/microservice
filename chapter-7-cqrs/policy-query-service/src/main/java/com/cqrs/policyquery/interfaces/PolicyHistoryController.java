@@ -29,10 +29,11 @@ public class PolicyHistoryController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
             @RequestParam(required = false) String policyName,
+            @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(required = false) Integer size) {
         int pageSize = size != null ? size : properties.getPagination().getDefaultSize();
-        return queryService.query(subscriberId, from, to, policyName, page, pageSize);
+        return queryService.query(subscriberId, from, to, policyName, search, page, pageSize);
     }
 
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
@@ -41,9 +42,10 @@ public class PolicyHistoryController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
             @RequestParam(required = false) String policyName,
             @RequestParam(required = false) String subscriberId,
+            @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(required = false) Integer size) {
         int pageSize = size != null ? size : properties.getPagination().getDefaultSize();
-        return queryService.query(subscriberId, from, to, policyName, page, pageSize);
+        return queryService.query(subscriberId, from, to, policyName, search, page, pageSize);
     }
 }

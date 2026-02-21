@@ -41,8 +41,9 @@ public class PolicyEventConsumer {
         this.objectMapper = objectMapper;
     }
 
+    // SpEL: topic from PolicyQueryProperties bean so config is single-sourced (same as sendToDlq uses).
     @KafkaListener(
-            topics = "${policy-query.kafka.topic:policy-events}",
+            topics = "#{@policyQueryProperties.kafka.topic}",
             groupId = "${spring.kafka.consumer.group-id:policy-query-service}",
             containerFactory = "kafkaListenerContainerFactory"
     )
