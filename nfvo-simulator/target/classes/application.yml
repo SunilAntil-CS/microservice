@@ -1,0 +1,12 @@
+# NFVO Simulator – CLI client for LCM REST API
+# Run with: java -jar nfvo-simulator.jar instantiate my-vnf 2 4
+# Or set base URL: java -jar nfvo-simulator.jar --baseUrl http://localhost:8080 instantiate my-vnf 2 4
+
+spring:
+  main:
+    web-application-type: none
+
+# Default LCM base URL (overridden by --baseUrl on command line)
+nfvo:
+  lcm:
+    base-url: http://localhost:8080

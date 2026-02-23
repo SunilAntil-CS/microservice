@@ -1,0 +1,8 @@
+# Test profile: circuit breaker opens quickly for tests
+resilience4j:
+  circuitbreaker:
+    instances:
+      bookingService:
+        minimumNumberOfCalls: 2
+        failureRateThreshold: 50
+        slidingWindowSize: 4

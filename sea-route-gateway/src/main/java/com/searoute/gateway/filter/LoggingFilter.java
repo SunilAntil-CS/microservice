@@ -3,7 +3,7 @@ package com.searoute.gateway.filter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
@@ -45,7 +45,7 @@ public class LoggingFilter implements org.springframework.cloud.gateway.filter.G
         ServerHttpRequest request = exchange.getRequest();
         String method = request.getMethod() != null ? request.getMethod().name() : "UNKNOWN";
         String path = request.getPath().value();
-        HttpStatus status = exchange.getResponse().getStatusCode();
+        HttpStatusCode status = exchange.getResponse().getStatusCode();
         String statusCode = status != null ? String.valueOf(status.value()) : "UNKNOWN";
         String correlationId = (String) exchange.getAttribute(CorrelationIdFilter.CORRELATION_ID_ATTRIBUTE);
 

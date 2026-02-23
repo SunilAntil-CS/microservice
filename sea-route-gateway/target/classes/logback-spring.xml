@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logback configuration for Sea Route Gateway.
+  Uses logstash-logback-encoder to write JSON to the console so log aggregators
+  (e.g. ELK, Splunk) can parse and index fields (level, message, timestamp, etc.).
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <springProperty name="APP_NAME" source="spring.application.name" defaultValue="sea-route-gateway"/>
+
+    <!-- Console appender: one line per log event as JSON -->
+    <appender name="CONSOLE_JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>correlationId</includeMdcKeyName>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE_JSON"/>
+    </root>
+
+    <!-- Gateway and app packages at DEBUG for development if needed -->
+    <logger name="com.searoute.gateway" level="INFO"/>
+    <logger name="org.springframework.cloud.gateway" level="INFO"/>
+</configuration>

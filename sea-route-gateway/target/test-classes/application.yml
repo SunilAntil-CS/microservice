@@ -1,0 +1,14 @@
+# Test configuration: disable discovery and Redis for context load test
+spring:
+  cloud:
+    gateway:
+      enabled: true
+  main:
+    web-application-type: reactive
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration
+
+eureka:
+  client:
+    enabled: false
