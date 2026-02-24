@@ -58,8 +58,8 @@ The `oauth2ResourceServer()` configuration in `SecurityWebFilterChain` enables t
 ### What is the purpose of the custom `JwtAuthenticationFilter` you wrote?
 After Spring Security has validated the JWT and placed a `Jwt` object in the security context, your filter extracts the user ID and roles from the token and adds them as headers (`X-User-ID`, `X-User-Roles`) to the outgoing request to backend services. This way, downstream services can identify the caller without parsing the token again. The filter does **not** perform validation – it relies on Spring Security to have already done that.
 
-### Why does your filter have an unused `writeJsonError` method?
-That method was a leftover from an earlier design where the filter might have done its own validation. In the current design, Spring Security handles all authentication failures before your filter runs, so the method is not called. For production, you should replace it with proper `AuthenticationEntryPoint` and `AccessDeniedHandler` as discussed.
+### Does the JWT filter write 401/403 error responses?
+No. Authentication failures are handled by the custom `ServerAuthenticationEntryPoint` (and access denied by a custom handler). Those return consistent JSON (e.g. timestamp, status, error, message, path). The JWT filter only runs after successful authentication and does not write error responses.
 
 ### How should production handle authentication errors?
 Instead of handling errors in a `GlobalFilter`, you should configure:

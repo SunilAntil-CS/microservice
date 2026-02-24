@@ -48,6 +48,9 @@ public class WebClientConfig {
     @Value("${searoute.backend.schedule-base-url}")
     private String scheduleBaseUrl;
 
+    @Value("${searoute.backend.payment-base-url}")
+    private String paymentBaseUrl;
+
     /**
      * Shared HTTP client: connect timeout, response (read) timeout, and a fixed
      * connection pool. Reused by all service WebClients. These timeouts ensure
@@ -88,6 +91,14 @@ public class WebClientConfig {
     public WebClient scheduleServiceWebClient(HttpClient gatewayHttpClient) {
         return WebClient.builder()
                 .baseUrl(scheduleBaseUrl)
+                .clientConnector(new ReactorClientHttpConnector(gatewayHttpClient))
+                .build();
+    }
+
+    @Bean
+    public WebClient paymentServiceWebClient(HttpClient gatewayHttpClient) {
+        return WebClient.builder()
+                .baseUrl(paymentBaseUrl)
                 .clientConnector(new ReactorClientHttpConnector(gatewayHttpClient))
                 .build();
     }

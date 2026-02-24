@@ -47,6 +47,22 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- Prometheus metrics (exposed at /actuator/prometheus) -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
+        <!-- Distributed tracing: Brave bridge and Zipkin reporter (X-B3-* headers propagated to downstream) -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.zipkin.reporter2</groupId>
+            <artifactId>zipkin-reporter-brave</artifactId>
+        </dependency>
+
         <!-- Spring Cloud Netflix Eureka Client (service discovery) -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>

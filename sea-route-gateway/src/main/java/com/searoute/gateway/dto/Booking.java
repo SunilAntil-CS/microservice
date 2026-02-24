@@ -25,6 +25,8 @@ public class Booking {
     private String vesselId;
     private String origin;
     private String destination;
+    /** Container or tracking IDs for cargo; used by API composition to fetch tracking. */
+    private java.util.List<String> containerIds;
 
     /**
      * Returns an empty booking instance, e.g. for circuit breaker fallback when
@@ -39,6 +41,7 @@ public class Booking {
                 .vesselId(null)
                 .origin(null)
                 .destination(null)
+                .containerIds(null)
                 .build();
     }
 }

@@ -110,7 +110,7 @@ Each route adds the request header `X-Gateway-Source: sea-route` so backends can
 2. **Configuration** (`application.yml`): The issuer URI (e.g. `http://localhost:8080/auth/realms/searoute` for a development Keycloak realm) is set under `spring.security.oauth2.resourceserver.jwt.issuer-uri`. The decoder uses OpenID Connect discovery to resolve the JWK Set URI; an optional `jwk-set-uri` can override this. Public keys from the JWK Set are **cached automatically** by the decoder, so repeated requests do not hit the IdP for key lookup.
 3. **Security** (`config/SecurityConfig`): A `SecurityWebFilterChain` bean is defined with `@EnableWebFluxSecurity`. Routes matching `/actuator/health` are permitted without authentication; all other exchanges require an authenticated JWT via `.anyExchange().authenticated()`. OAuth2 resource server with JWT is enabled (`.oauth2ResourceServer().jwt()`), so the `Authorization: Bearer <token>` header is validated (signature, issuer, expiry) and the principal is set in the security context.
 4. **User context propagation** (`filter/JwtAuthenticationFilter`): A `GlobalFilter` runs after the security filter chain. When the principal is a JWT, the filter reads the subject (`sub`) and roles (from `realm_access.roles`, `roles`, or `scope` claims, depending on the IdP) and adds headers `X-User-ID` and `X-User-Roles` to the outgoing request. Downstream services can use these headers to identify the caller without parsing the token; they can trust the values because the gateway has already validated the JWT.
-5. **Error responses**: Custom handlers (see Step 4a) return consistent JSON for 401 and 403; the JWT filter's `writeJsonError` helper remains available for filters that need to write JSON errors.
+5. **Error responses**: Custom handlers (see Step 4a) return consistent JSON for 401 and 403.
 
 ### Summary
 
@@ -265,6 +265,7 @@ So: **you define properties in YAML under `resilience4j.circuitbreaker.instances
 | BookingServiceProxy | `"bookingService"` | `instances.bookingService` |
 | CargoTrackingServiceProxy | `"trackingService"` | `instances.trackingService` |
 | VesselScheduleServiceProxy | `"scheduleService"` | `instances.scheduleService` |
+| PaymentServiceProxy | `"paymentService"` | `instances.paymentService` |
 
 ### DTOs and proxies
 
@@ -276,3 +277,72 @@ So: **you define properties in YAML under `resilience4j.circuitbreaker.instances
 - **BookingServiceProxyTest**: Uses **WireMock** to mock the backend. Tests (1) success when backend returns 200, (2) fallback when backend returns 500, (3) fallback when backend is slow (timeout), (4) circuit breaker opens after repeated failures and subsequent calls get fallback.
 - **GatewayWebTestClientTest**: Uses **WebTestClient** to call the gateway (e.g. `/actuator/health`) and assert status and body.
 - Test profile `application-test.yml` configures Resilience4J so the circuit breaker opens quickly in tests (e.g. `minimumNumberOfCalls=2`, `failureRateThreshold=50`).
+
+---
+
+## Step 7: API Composition (Booking Summary)
+
+### Purpose
+
+**API composition** reduces round trips for the client: instead of the client calling the booking, tracking, and payment services separately, a single gateway endpoint aggregates the data and returns one combined response. The gateway uses the existing WebClient proxies to call the backends and composes the result.
+
+### Implementation
+
+- **BookingSummaryHandler** (`handler/BookingSummaryHandler`): Defines `getSummary(ServerRequest request)`. It extracts the booking ID from the path variable, calls `BookingServiceProxy.getBooking(id)`, then from the booking (and its optional `containerIds`) fetches cargo/tracking via `CargoTrackingServiceProxy`, and invoice status via `PaymentServiceProxy.getInvoiceByBookingId(bookingId)`. It uses **Mono.zip** so that the booking, cargo, and invoice calls run in parallel where possible, improving performance compared to sequential calls.
+- **Graceful degradation:** If one service fails (timeout, 5xx, or circuit open), the handler logs a warning and continues with a default or `null` for that part (e.g. `Booking.empty()`, `Invoice.empty()`, or an empty cargo list). A **warnings** list is added to the response so the client still receives partial data and knows which part failed.
+- **BookingSummaryResponse** (`dto/BookingSummaryResponse`): Combined DTO with `bookingId`, `customer`, `cargo` (list of `CargoItem`), `invoice` (`InvoiceSummary`), and `warnings` (list of strings).
+- **Route:** The summary endpoint is registered in **RouteConfig** as a route that matches `GET /api/v1/bookings/{id}/summary`. It is placed **before** the generic `/api/v1/bookings/**` route so it takes precedence. A **BookingSummaryGatewayFilter** builds a `ServerRequest` from the exchange, calls the handler, and writes the handler’s `ServerResponse` to the exchange (no backend forwarding).
+- **Payment service:** A **PaymentServiceProxy** and **Invoice** DTO were added, with backend URL `searoute.backend.payment-base-url` (e.g. `http://localhost:8084`) and circuit breaker instance `paymentService`.
+
+### Fallback logic
+
+- Booking: on error, use `Booking.empty()` and add a warning.
+- Cargo: if the booking has `containerIds`, fetch tracking for each (in parallel); if not, fetch one tracking by booking ID. On error, add a warning and return an empty list or partial list.
+- Invoice: on error, use `InvoiceSummary` with status `UNAVAILABLE` and add a warning.
+- The response always returns 200 with a JSON body; partial data plus `warnings` indicates which services failed.
+
+### Testing
+
+- **BookingSummaryHandlerTest**: Integration tests using **WebTestClient** with the three proxies **mocked** (`@MockBean`). A test router exposes the handler at `/test/bookings/{id}/summary`. Tests verify: (1) combined response when all proxies return data, (2) partial data and a warning when the payment proxy fails, (3) partial data and warnings when the booking is unavailable (empty).
+
+---
+
+## Step 8: Observability (Metrics and Distributed Tracing)
+
+### Purpose
+
+**Metrics** help monitor system health and performance (throughput, latency, errors). **Distributed tracing** tracks a request across the gateway and downstream services (booking, tracking, payment), which is crucial for debugging latency and understanding call flows in a multi-service setup.
+
+### Dependencies
+
+- **micrometer-registry-prometheus**: Exposes metrics in Prometheus format at `/actuator/prometheus`.
+- **micrometer-tracing-bridge-brave**: Bridges Micrometer Tracing to Brave; provides the `Tracer` bean and propagates trace context.
+- **zipkin-reporter-brave**: Sends spans to Zipkin so traces can be viewed in the Zipkin UI.
+
+### Configuration (`application.yml`)
+
+- **management.endpoints.web.exposure**: `include: health,metrics,prometheus` so `/actuator/health`, `/actuator/metrics`, and `/actuator/prometheus` are enabled.
+- **management.tracing.sampling.probability**: `1.0` for development (sample all requests); use a lower value (e.g. `0.1`) in production to reduce overhead.
+- **management.zipkin.tracing.endpoint**: `http://localhost:9411/api/v2/spans` so the gateway sends spans to Zipkin.
+
+### Tracing and X-B3-* headers
+
+With the Brave bridge and Zipkin reporter, Spring Boot auto-configuration provides a **Tracer** bean. Spring Cloud Gateway integrates with Micrometer Tracing so that **X-B3-* headers** (e.g. `X-B3-TraceId`, `X-B3-SpanId`, `X-B3-Sampled`) are automatically propagated to downstream services when the gateway forwards requests. Backends that use the same tracing stack can join the same trace. An optional **TracingConfig** class documents this; no custom bean is required unless you override defaults.
+
+### Custom metrics
+
+- **BookingSummaryHandler** injects **MeterRegistry** and records:
+  - **booking.summary.calls**: Counter incremented on each summary request (monitors call rate).
+  - **booking.summary.duration**: Timer recording the duration of each summary call (monitors latency).
+- These metrics appear under `/actuator/prometheus` and can be scraped by Prometheus for dashboards and alerts.
+
+### Custom span (Zipkin)
+
+- **BookingSummaryHandler** injects **Tracer** and adds a custom span **summary-merge** around the step that merges booking, cargo, and invoice into the single `BookingSummaryResponse`. That step is in-memory only (no HTTP call), so it would not appear in Zipkin otherwise; the span makes composition/merge time visible in the trace. The three backend calls (booking, cargo, invoice) are already traced by WebClient/Brave, so in Zipkin you see the gateway span, the merge span, and the HTTP client spans for each downstream call.
+
+### Testing
+
+1. **Run Zipkin**: `docker run -d -p 9411:9411 openzipkin/zipkin`
+2. **Run Prometheus** (optional): Configure Prometheus to scrape `http://localhost:8080/actuator/prometheus` and run Prometheus in Docker or locally.
+3. Send requests through the gateway (e.g. `GET /api/v1/bookings/123/summary` with a valid JWT). In Zipkin, search by service name (e.g. `sea-route-gateway`) to see traces; verify that downstream calls carry the same trace ID.
+4. Open `http://localhost:8080/actuator/prometheus` and confirm the presence of `booking_summary_calls_total` and `booking_summary_duration_*` (and other Micrometer metrics).

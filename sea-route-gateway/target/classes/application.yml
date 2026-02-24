@@ -30,15 +30,25 @@
 #       host: localhost
 #       port: 6379
 
-# Actuator
-# management:
-#   endpoints:
-#     web:
-#       exposure:
-#         include: health,info,gateway
-#   endpoint:
-#     health:
-#       show-details: when-authorized
+# -----------------------------------------------------------------------------
+# Actuator, metrics (Prometheus), and distributed tracing (Zipkin)
+# -----------------------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  # Distributed tracing: track a request across gateway and downstream services (X-B3-* headers).
+  # Crucial for debugging latency and understanding call flows.
+  tracing:
+    sampling:
+      probability: 1.0   # development: sample all; in production use a lower value (e.g. 0.1)
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans
 
 # Application name (for Eureka registration)
 # spring:
@@ -63,8 +73,12 @@ spring:
       host: localhost
       port: 6379
   # Request rate limiter: add X-RateLimit-* headers to responses for client visibility.
+  # Token bucket: replenish-rate = tokens per second; burst-capacity = max tokens per key (user or IP).
   cloud:
     gateway:
+      rate-limiter:
+        replenish-rate: 10   # sustained request rate per second per key
+        burst-capacity: 20   # max burst (allows short spikes above replenish-rate)
       filter:
         request-rate-limiter:
           include-headers: true
@@ -105,6 +119,12 @@ resilience4j:
         waitDurationInOpenState: 10s
         minimumNumberOfCalls: 5
         permittedNumberOfCallsInHalfOpenState: 3
+      paymentService:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        minimumNumberOfCalls: 5
+        permittedNumberOfCallsInHalfOpenState: 3
 
 # -----------------------------------------------------------------------------
 # Backend service base URLs (for WebClient proxies)
@@ -115,3 +135,4 @@ searoute:
     booking-base-url: http://localhost:8081
     tracking-base-url: http://localhost:8082
     schedule-base-url: http://localhost:8083
+    payment-base-url: http://localhost:8084

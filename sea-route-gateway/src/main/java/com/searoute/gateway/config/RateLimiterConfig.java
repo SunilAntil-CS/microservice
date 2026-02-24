@@ -1,5 +1,6 @@
 package com.searoute.gateway.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
 import org.springframework.context.annotation.Bean;
@@ -21,10 +22,10 @@ import reactor.core.publisher.Mono;
 @Configuration
 public class RateLimiterConfig {
 
-    /** Tokens added to the bucket per second (sustained request rate). */
-    private static final int REPLENISH_RATE = 10;
-    /** Maximum tokens in the bucket (allows bursts above the sustained rate). */
-    private static final int BURST_CAPACITY = 20;
+    @Value("${spring.cloud.gateway.rate-limiter.replenish-rate:10}")
+    private int replenishRate;
+    @Value("${spring.cloud.gateway.rate-limiter.burst-capacity:20}")
+    private int burstCapacity;
 
     /**
      * Resolves the rate-limit key per request so that each client is limited independently.
@@ -57,6 +58,6 @@ public class RateLimiterConfig {
      */
     @Bean
     public RedisRateLimiter redisRateLimiter() {
-        return new RedisRateLimiter(REPLENISH_RATE, BURST_CAPACITY);
+        return new RedisRateLimiter(replenishRate, burstCapacity);
     }
 }

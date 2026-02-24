@@ -1,11 +1,7 @@
 package com.searoute.gateway.filter;
 
 import org.springframework.core.Ordered;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpRequest;
-import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.core.context.SecurityContext;
@@ -14,7 +10,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -117,42 +112,5 @@ public class JwtAuthenticationFilter implements org.springframework.cloud.gatewa
         return roles.stream()
                 .map(Object::toString)
                 .collect(Collectors.joining(","));
-    }
-
-    /**
-     * Writes a JSON error response to the exchange's response and commits it.
-     * Use this for consistent 401/403 or other error responses when the filter
-     * or a custom validator needs to return an error body (e.g. invalid or
-     * missing token when not using the default Spring Security response).
-     *
-     * @param exchange current exchange
-     * @param status   HTTP status (e.g. {@link HttpStatus#UNAUTHORIZED})
-     * @param error    short error code (e.g. "Unauthorized")
-     * @param message  human-readable message
-     * @return {@code Mono} that completes when the response has been written
-     */
-    public static Mono<Void> writeJsonError(ServerWebExchange exchange, HttpStatus status,
-                                            String error, String message) {
-        ServerHttpResponse response = exchange.getResponse();
-        response.setStatusCode(status);
-        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-        response.getHeaders().set(HttpHeaders.CACHE_CONTROL, "no-store");
-
-        String body = String.format("{\"error\":\"%s\",\"message\":\"%s\"}",
-                escapeJson(error), escapeJson(message));
-
-        return response.writeWith(Mono.fromCallable(() -> {
-            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-            return response.bufferFactory().wrap(bytes);
-        }));
-    }
-
-    private static String escapeJson(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
     }
 }

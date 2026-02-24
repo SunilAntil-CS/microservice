@@ -1,11 +1,14 @@
 package com.searoute.gateway.config;
 
+import com.searoute.gateway.filter.BookingSummaryGatewayFilter;
+import com.searoute.gateway.handler.BookingSummaryHandler;
+import org.springframework.cloud.gateway.filter.GatewayFilter;
+import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
 import org.springframework.cloud.gateway.route.RouteLocator;
 import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 
 /**
  * Defines gateway routes using a programmatic {@link RouteLocator}.
@@ -37,16 +40,29 @@ public class RouteConfig {
     private static final String VESSEL_SCHEDULE_SERVICE_URI = "http://localhost:8083";
 
     @Bean
+    public GatewayFilter bookingSummaryFilter(BookingSummaryHandler bookingSummaryHandler) {
+        return new BookingSummaryGatewayFilter(bookingSummaryHandler);
+    }
+
+    @Bean
     public RouteLocator customRouteLocator(RouteLocatorBuilder builder,
                                           KeyResolver userKeyResolver,
-                                          RedisRateLimiter redisRateLimiter) {
+                                          RedisRateLimiter redisRateLimiter,
+                                          GatewayFilter bookingSummaryFilter) {
         return builder.routes()
+                // API composition: only when client calls .../summary do we aggregate booking + cargo + invoice.
+                // This route must be before /api/v1/bookings/** so it matches first; otherwise individual
+                // APIs (e.g. GET /api/v1/bookings/123) are forwarded to the booking backend.
+                .route("booking-summary", r -> r
+                        .path("/api/v1/bookings/{id}/summary")
+                        .filters(f -> f.filter(bookingSummaryFilter))
+                        .uri("http://localhost:0"))  // not used; filter handles response
                 .route("bookings", r -> r.path("/api/v1/bookings/**")
                         .filters(f -> f
                                 .addRequestHeader("X-Gateway-Source", "sea-route")
                                 .requestRateLimiter(c -> c
                                         .setKeyResolver(userKeyResolver)
-                                        .setRateLimiter(redisRateLimiter)))
+                                       .setRateLimiter(redisRateLimiter)))
                         .uri(BOOKING_SERVICE_URI))  // or lb://BOOKING-SERVICE with Eureka
                 .route("tracking", r -> r.path("/api/v1/tracking/**")
                         .filters(f -> f
