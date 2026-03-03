@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import DiagramApp, { getConceptTabs, ConceptTabContent } from "./concept1.jsx";
+import DiagramApp, { getConceptTabs, ConceptTabContent, PROBLEM_TEXTS, INTERVIEW_TEXTS } from "./concept1.jsx";
 
 // ─────────────────────────────────────────────
 // THEME
@@ -20,15 +20,15 @@ const SEED = {
     chapters: [{
       id:"ch1", title:"Chapter 4: Managing Transactions with Sagas",
       concepts: [
-        { id:"co1", title:"Semantic Lock",                  diagramId:"c1", domain:"Distributed Systems", completed:false },
-        { id:"co2", title:"Countermeasure: Optimistic Lock", diagramId:"c2", domain:"Database Patterns",   completed:false },
-        { id:"co3", title:"Pessimistic View",               diagramId:"c3", domain:"Distributed Systems", completed:false },
-        { id:"co4", title:"Re-read Value",                  diagramId:"c4", domain:"Database Patterns",   completed:false },
-        { id:"co5", title:"Version File",                   diagramId:"c5", domain:"Database Patterns",   completed:false },
-        { id:"co6", title:"By Value",                       diagramId:"c6", domain:"Policy Control",      completed:false },
-        { id:"co7", title:"Redis Session Cache",            diagramId:"c7", domain:"Caching / Redis",     completed:false },
-        { id:"co8", title:"Gigawords Handling",             diagramId:"c8", domain:"RADIUS / RFC",        completed:false },
-        { id:"co9", title:"OCS Response Handling",          diagramId:"c9", domain:"OCS / Billing",       completed:false },
+        { id:"co1", title:"Semantic Lock",                  diagramId:"c1", domain:"Distributed Systems", completed:false, edits:{} },
+        { id:"co2", title:"Countermeasure: Optimistic Lock", diagramId:"c2", domain:"Database Patterns",   completed:false, edits:{} },
+        { id:"co3", title:"Pessimistic View",               diagramId:"c3", domain:"Distributed Systems", completed:false, edits:{} },
+        { id:"co4", title:"Re-read Value",                  diagramId:"c4", domain:"Database Patterns",   completed:false, edits:{} },
+        { id:"co5", title:"Version File",                   diagramId:"c5", domain:"Database Patterns",   completed:false, edits:{} },
+        { id:"co6", title:"By Value",                       diagramId:"c6", domain:"Policy Control",      completed:false, edits:{} },
+        { id:"co7", title:"Redis Session Cache",            diagramId:"c7", domain:"Caching / Redis",     completed:false, edits:{} },
+        { id:"co8", title:"Gigawords Handling",             diagramId:"c8", domain:"RADIUS / RFC",        completed:false, edits:{} },
+        { id:"co9", title:"OCS Response Handling",          diagramId:"c9", domain:"OCS / Billing",       completed:false, edits:{} },
       ],
     }],
   }],
@@ -77,6 +77,12 @@ export default function LearningApp() {
         ...ch, concepts: ch.concepts.map(co => co.id === id ? { ...co, ...patch } : co),
       })),
     }))}));
+  }
+
+  function updateConceptEdits(coId, tabId, value) {
+    const co = findConcept(coId);
+    if (!co) return;
+    updateConcept(coId, { edits: { ...(co.edits || {}), [tabId]: value } });
   }
 
   function addBook() {
@@ -278,7 +284,7 @@ export default function LearningApp() {
         {/* ── MAIN AREA ── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
           {selConcept ? (
-            <ConceptView concept={selConcept} onToggleComplete={e => toggleComplete(selConcept.id, e)} />
+            <ConceptView concept={selConcept} onToggleComplete={e => toggleComplete(selConcept.id, e)} onSaveEdit={updateConceptEdits} />
           ) : (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.textDim, fontSize: 13 }}>
               {sidebarOpen ? "Select a concept from the menu" : (
@@ -302,19 +308,40 @@ export default function LearningApp() {
 // ─────────────────────────────────────────────
 // CONCEPT VIEW — diagram left + accordion right
 // ─────────────────────────────────────────────
-function ConceptView({ concept, onToggleComplete }) {
-  const tabs = concept.diagramId ? getConceptTabs(concept.diagramId) : [];
-  const [openId, setOpenId] = useState(() => tabs[0]?.id ?? null);
+function ConceptView({ concept, onToggleComplete, onSaveEdit }) {
+  const tabs = concept.diagramId ? getConceptTabs() : [];
+  const [openId,     setOpenId]     = useState(() => tabs[0]?.id ?? null);
+  const [editingTab, setEditingTab] = useState(null);
+  const [editText,   setEditText]   = useState("");
 
-  // Reset when concept changes
   useEffect(() => {
-    const t = concept.diagramId ? getConceptTabs(concept.diagramId) : [];
-    setOpenId(t[0]?.id ?? null);
+    setOpenId(concept.diagramId ? getConceptTabs()[0].id : null);
+    setEditingTab(null);
   }, [concept.id]); // eslint-disable-line
 
   function toggle(id) {
     setOpenId(prev => (prev === id ? null : id));
+    setEditingTab(null);
   }
+
+  function startEdit(tabId, e) {
+    e.stopPropagation();
+    setOpenId(tabId);
+    setEditingTab(tabId);
+    const saved = concept.edits?.[tabId];
+    if (saved !== undefined && saved !== null) {
+      setEditText(saved);
+    } else if (tabId === "problem")   { setEditText(PROBLEM_TEXTS[concept.diagramId]   || ""); }
+    else if (tabId === "interview")   { setEditText(INTERVIEW_TEXTS[concept.diagramId] || ""); }
+    else                              { setEditText(""); }
+  }
+
+  function saveEdit() {
+    onSaveEdit(concept.id, editingTab, editText);
+    setEditingTab(null);
+  }
+
+  function cancelEdit() { setEditingTab(null); }
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
@@ -339,44 +366,92 @@ function ConceptView({ concept, onToggleComplete }) {
       {/* ── Body ── */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
 
-        {/* Left: Diagram */}
-        <div style={{ flex: 1, overflow: "auto", borderRight: `1px solid ${C.border}` }}>
+        {/* Left: Diagram — 60% */}
+        <div style={{ flex: "0 0 60%", overflow: "auto", borderRight: `1px solid ${C.border}` }}>
           {concept.diagramId
             ? <DiagramApp initialConceptId={concept.diagramId} />
             : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: C.textDim, fontSize: 12 }}>No diagram linked.</div>
           }
         </div>
 
-        {/* Right: Accordion */}
+        {/* Right: Accordion — 40% */}
         {tabs.length > 0 && (
-          <div style={{ width: 340, display: "flex", flexDirection: "column", overflow: "hidden", background: C.bg0, flexShrink: 0 }}>
+          <div style={{ flex: "0 0 40%", display: "flex", flexDirection: "column", overflowY: "auto", background: C.bg0 }}>
             {tabs.map(t => {
-              const isOpen = openId === t.id;
+              const isOpen    = openId === t.id;
+              const isEditing = editingTab === t.id;
+              const hasEdit   = concept.edits?.[t.id] != null && concept.edits[t.id] !== "";
               return (
                 <div key={t.id} style={{ display: "flex", flexDirection: "column", borderBottom: `1px solid ${C.border}` }}>
 
                   {/* Section bar */}
-                  <button
+                  <div
                     onClick={() => toggle(t.id)}
                     style={{
                       display: "flex", alignItems: "center", justifyContent: "space-between",
-                      padding: "11px 14px", cursor: "pointer", width: "100%",
+                      padding: "12px 16px", cursor: "pointer",
                       background: isOpen ? C.bg3 : C.bg1,
-                      border: "none",
                       borderLeft: `3px solid ${isOpen ? C.accent : "transparent"}`,
                       color: isOpen ? C.text : C.textMuted,
-                      fontFamily: F, fontSize: 11, fontWeight: 700,
-                      textAlign: "left", transition: "background 0.1s",
+                      userSelect: "none",
                     }}
                   >
-                    <span>{t.icon} {t.label}</span>
-                    <span style={{ fontSize: 9, color: isOpen ? C.accent : C.textDim }}>{isOpen ? "▲" : "▼"}</span>
-                  </button>
+                    <span style={{ fontFamily: F, fontSize: 13, fontWeight: 700 }}>{t.icon} {t.label}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {hasEdit && <span style={{ fontSize: 9, color: C.green }} title="Custom content saved">●</span>}
+                      <span style={{ fontSize: 11, color: isOpen ? C.accent : C.textDim }}>{isOpen ? "▲" : "▼"}</span>
+                    </div>
+                  </div>
 
                   {/* Section content */}
                   {isOpen && (
-                    <div style={{ overflow: "auto", padding: "12px 14px", background: C.bg0, maxHeight: 420 }}>
-                      <ConceptTabContent conceptId={concept.diagramId} tabId={t.id} />
+                    <div style={{ padding: "14px 16px", background: C.bg0, zoom: 1.25 }}>
+                      {isEditing ? (
+                        /* ── Edit mode ── */
+                        <div>
+                          <textarea
+                            value={editText}
+                            onChange={e => setEditText(e.target.value)}
+                            rows={10}
+                            style={{
+                              width: "100%", background: C.bg3, color: C.text,
+                              border: `1px solid ${C.accent}`, borderRadius: 6,
+                              padding: "10px 12px", fontFamily: F, fontSize: 11,
+                              lineHeight: 1.75, resize: "vertical", boxSizing: "border-box",
+                              outline: "none",
+                            }}
+                          />
+                          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                            <button onClick={saveEdit} style={{ background: C.greenDim, border: `1px solid ${C.green}`, color: C.green, borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontFamily: F, fontSize: 11, fontWeight: 700 }}>✓ Accept</button>
+                            <button onClick={cancelEdit} style={{ background: C.bg3, border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontFamily: F, fontSize: 11 }}>✕ Cancel</button>
+                            {hasEdit && <button onClick={() => { onSaveEdit(concept.id, t.id, null); setEditingTab(null); }} style={{ background: "transparent", border: `1px solid ${C.textDim}`, color: C.textDim, borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontFamily: F, fontSize: 11 }}>↺ Reset</button>}
+                          </div>
+                        </div>
+                      ) : (
+                        /* ── View mode: box with edit button in top-right corner ── */
+                        <div style={{ position: "relative" }}>
+                          <button
+                            onClick={e => startEdit(t.id, e)}
+                            title="Edit"
+                            style={{
+                              position: "absolute", top: 6, right: 6, zIndex: 1,
+                              background: C.bg3, border: `1px solid ${C.border}`,
+                              color: C.textDim, borderRadius: 4, padding: "2px 7px",
+                              cursor: "pointer", fontFamily: F, fontSize: 10,
+                              lineHeight: 1.4,
+                            }}
+                          >✏️ edit</button>
+                          {hasEdit ? (
+                            <div style={{ fontSize: 9.5, color: "#94a3b8", lineHeight: 1.85, whiteSpace: "pre-wrap", paddingRight: 60 }}>
+                              {concept.edits[t.id]}
+                            </div>
+                          ) : (
+                            <div style={{ paddingRight: 60 }}>
+                              <ConceptTabContent conceptId={concept.diagramId} tabId={t.id} />
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 

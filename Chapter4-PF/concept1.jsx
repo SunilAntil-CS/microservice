@@ -713,7 +713,7 @@ function ConceptProblem({ id, color }) {
     c10: <> OCS returns four possible responses after evaluating quota. <span style={{color:"#22c55e"}}>Normal ACK</span> — balance OK, wait for next interim. <span style={{color:"#f59e0b"}}>Threshold crossed</span> (50%/90%) — send idempotent SMS notification but <span style={{color:"#f59e0b"}}>NO speed change, NO CoA</span>. <span style={{color:"#ef4444"}}>Quota exhausted</span> (100%) — the critical path: AAA must send <span style={{color:"#ef4444"}}>CoA Type 2 enforcement</span> to BNG (throttle to 1Mbps), wait for <span style={{color:"#22c55e"}}>CoA-ACK</span>, and only THEN publish the notification event for SMS. Confusing threshold (notify-only) with exhaustion (enforce) causes either <span style={{color:"#ef4444"}}>false throttle at 50%</span> or <span style={{color:"#ef4444"}}>missed enforcement at 100%</span>. OCS is the <span style={{color:"#0ea5e9"}}>decision maker</span>; AAA Server is the <span style={{color:"#0ea5e9"}}>enforcer</span>; BNG owns the <span style={{color:"#0ea5e9"}}>hardware</span>. AAA never independently decides to throttle. </>,
   };
   return (
-    <div style={{ background:"#080e1c", border:`1px solid ${color}33`, borderRadius:8, padding:"10px 16px", marginBottom:14, fontSize:9.5, color:"#94a3b8", lineHeight:1.85 }}>
+    <div style={{ background:"#080e1c", border:`1px solid ${color}`, borderRadius:8, padding:"10px 16px", marginBottom:14, fontSize:9.5, color:"#94a3b8", lineHeight:1.85 }}>
       <span style={{ color, fontWeight:700 }}>The Problem: </span>
       {problems[id]}
     </div>
@@ -778,22 +778,116 @@ export default function App({ initialConceptId = "c1", onBack } = {}) {
 }
 
 // ─────────────────────────────────────────────
+// PLAIN TEXT EXPORTS (for editable fields)
+// ─────────────────────────────────────────────
+export const PROBLEM_TEXTS = {
+  c1:  "User pays for a booster at 11:59 PM — CRM collects payment. Concurrently, the midnight suspension job runs for an unpaid main plan bill. Without a semantic lock, both operations read ACTIVE. Suspension writes SUSPENDED; booster completes and overwrites it back to ACTIVE — the suspended account gets 150Mbps, no refund is triggered, and the conflict is completely invisible to the BSS layer. Both operator and subscriber lose.",
+  c2:  "Three pod crash scenarios arise. Scenario A (crash before CoA) and Scenario B (crash while waiting for CoA-ACK) are watchdog-recoverable. Scenario C is the most dangerous — pod crashes after CoA-ACK but before MongoDB commit. BNG hardware is already upgraded to 150Mbps, but the watchdog blindly marks state = FAILED and triggers a refund for a plan actively running on the network. The Outbox eliminates all three by writing the CoA payload atomically with the state change — CoA delivery is retried independently of the pod lifecycle. Applied selectively to Flow 1 only; Flow 2 requires sub-500ms RADIUS response where relay lag is unacceptable.",
+  c3:  "AAA Server runs Active-Active across Mumbai and Gujarat data centres with 20–40ms MongoDB replication lag. Gujarat AAA Server sends CoA → BNG to upgrade to 150Mbps, holding @Version=5. During the CoA window, an admin in Mumbai emergency-downgrades the plan — Mumbai saves @Version=6, speed=100Mbps. Gujarat receives CoA-ACK (hardware already at 150Mbps) and blindly saves @Version=5, speed=150Mbps — silently overwriting the admin's change. With @Version, the conflict is detected. AAA Server re-reads fresh state: if QUOTA_EXHAUSTED → OCS is authority, no corrective CoA; if ACTIVE and speed differs → send corrective CoA; if ACTIVE and speed matches → re-save. OCS is the quota authority; AAA Server never overrides an OCS throttle unless MongoDB state explicitly confirms quota has been reset.",
+  c4:  "Optimistic notification — notifying CRM before BNG confirms — is the number one cause of subscriber complaints in broadband. AAA Server tells CRM 'Success!' immediately; user's app shows 150Mbps. Then BNG reboots, the CoA is lost, and the user is still on 50Mbps. Pessimistic View holds back all downstream notifications until CoA-ACK is received. The same rule applies in Flow 2 — the FUP throttle SMS is sent only after BNG confirms the 1Mbps policy is applied on hardware. The cost: a few seconds of 'Processing…'. The gain: zero false promises.",
+  c6:  "The AAA Server handles 50,000 RADIUS packets/sec on Spring WebFlux backed by Netty's event loop — typically 16 threads for 50K+ req/sec. A single blocking mongoTemplate.findOne() inside the handler parks the Netty thread on a kernel I/O wait. When sixteen packets arrive simultaneously all sixteen threads park. The event loop is completely starved: no thread is free to accept new packets. UDP socket buffers fill, packets are dropped, RFC 2865 clients retransmit, the retransmit storm compounds — full throughput collapse. The fix: a single import swap to ReactiveMongoTemplate returns Mono<> in under a millisecond. The Netty thread is free instantly. 50,000 packets/sec — sustained with sixteen threads.",
+  c7:  "Redis holds live session quota state: quota_used=8GB for every active subscriber. During a Redis cluster rolling upgrade or node failure, a 5–30 second outage window occurs. The next RADIUS Interim-Update arrives — AAA performs a cache lookup, receives a connection timeout, and defaults quota_used=0. The subscriber appears to have a completely fresh quota. BNG is told to continue the session. The subscriber consumes an additional 10GB without enforcement. The CDR closes with 10GB — the operator has delivered 18GB and billed for 10GB: silent revenue leakage. Write-through caching ensures every quota update is written to Redis and MongoDB simultaneously. On a Redis cache miss, AAA falls back to MongoDB. Billing error window: zero.",
+  c8:  "RADIUS Acct-Output-Octets is a 32-bit counter — max 4,294,967,295 bytes (4GB). At Service Provider Fiber speeds this wraps constantly: every 1.8 minutes at 300Mbps, every 32 seconds at 1Gbps. Without RFC 2869 Gigawords handling, the counter resets near zero after wrap — AAA Server calculates a negative delta, clamps to zero, and OCS receives wrong usage. Subscriber uses data for free. With Gigawords: trueTotal = (Gigawords × 4,294,967,296) + Octets. Delta is always correct. Because AAA sends only relative deltas, the OCS operation balance = balance - delta is commutative — order-independent, no row locks, thousands processed concurrently.",
+  c9:  "Without By Value routing, all 50 million subscribers hit synchronous OCS on every RADIUS Interim-Update — the OCS becomes the bottleneck and the system collapses. But 90% of subscribers are postpaid where eventual consistency is perfectly acceptable. Only 10% are prepaid with low balance where zero revenue leakage tolerance demands synchronous OCS calls. isHighRisk() checks PREPAID + balance < 10GB: high-risk gets sync RADIUS proxy to OCS; low-risk gets async Kafka to CDR system. Result: OCS load drops from 50K/sec to 5K/sec — 10× throughput improvement.",
+  c10: "OCS returns four possible responses after evaluating quota. Normal ACK — balance OK, wait for next interim. Threshold crossed (50%/90%) — send idempotent SMS notification but NO speed change, NO CoA. Quota exhausted (100%) — the critical path: AAA must send CoA Type 2 enforcement to BNG (throttle to 1Mbps), wait for CoA-ACK, and only THEN publish the notification event for SMS. Confusing threshold (notify-only) with exhaustion (enforce) causes either false throttle at 50% or missed enforcement at 100%. OCS is the decision maker; AAA Server is the enforcer; BNG owns the hardware.",
+};
+
+export const INTERVIEW_TEXTS = {
+  c1:  `"The Semantic Lock prevents Lost Updates — but the deeper insight is the BUSINESS impact. Without it, PCF overwrites suspension, the user enjoys 150Mbps on an unpaid account, and critically — no compensating transaction is ever triggered.\n\nThe lock handles both race orderings: booster first → suspension 409s and retries. Suspension first → pre-check reads SUSPENDED and fails fast without sending any CoA to BNG — no hardware confusion.\n\nNote: when suspension wins, it must also send a CoA to BNG — a database state change alone does not change hardware. We wait for that CoA-ACK before publishing the conflict event. Pessimistic View applied here too.\n\nBetween the booster CoA-ACK and the suspension CoA-ACK there is a brief window where the subscriber briefly gets 150Mbps on a suspended account. This is acceptable — the suspension CoA is sent immediately after the pivot decision, the window is milliseconds, and the alternative without a lock is permanent corruption.\n\nThis maps to Chapter 4: booster = Compensatable, suspension = Pivot, refund = Compensating Transaction."`,
+  c2:  `"We apply Outbox selectively based on latency profile. Flow 2 needs sub-500ms RADIUS response — polling lag makes Outbox unsuitable. Flow 1 is a business event — user waits on Processing screen — Outbox is appropriate.\n\nThe critical insight: TTL watchdog alone cannot distinguish three crash scenarios. Scenario C is most dangerous — BNG hardware is upgraded but we mark FAILED and refund an active plan. Outbox solves all three by making CoA retryable from persistent MongoDB state.\n\nOne additional coordination: when watchdog fires, it also marks related outbox rows ABANDONED — preventing a resuming relay from sending stale CoA commands to BNG.\n\nFor the residual edge case — Scenario C plus relay failure — network divergence persists until the reconciliation job or the next RADIUS Interim-Update detects the mismatch. In telecom, 5-minute reconciliation is the standard window. But billing discrepancies always require human intervention — the automated job corrects the network, but only Revenue Assurance can determine the correct financial outcome for the subscriber."`,
+  c3:  `"The CoA-ACK is our pivot point — once BNG confirms, hardware is already at the new speed. When OptimisticLockingException occurs, we cannot simply re-read and save — the router is running at a speed that may no longer match the database.\n\nWe check if fresh MongoDB state differs from what we told BNG. If admin changed the plan during our CoA window, we send a corrective CoA to realign hardware with admin's intent. Network state must always equal database state — that is a fundamental carrier-grade requirement.\n\nFor audit and safety: corrective CoA is fully logged, ops team alerted, and rate-limited. Human oversight is monitoring and alerting — not manual approval per subscriber, which would be impossible at carrier scale."`,
+  c4:  `"Pessimistic View means we hide unconfirmed state from all downstream systems. Nobody sees success until hardware confirms it. We apply this in both provisioning and FUP enforcement — the subscriber gets the SMS about speed reduction only after BNG confirms the throttle via CoA-ACK.\n\nFor FUP specifically: OCS is the decision maker — AAA Server is the enforcer. AAA Server proxies RADIUS accounting to OCS. OCS signals quota exhaustion via RADIUS accounting-response VSA attribute. AAA Server reads that instruction and sends enforcement CoA Type 2 to BNG. AAA Server never independently decides to throttle — it always waits for OCS instruction.\n\nThe business impact is clear: optimistic notification is the number one cause of subscriber complaints in broadband. Pessimistic View eliminates that entirely at the cost of a few seconds of 'Processing...' on the screen."`,
+  c6:  `"The Netty event loop is the backbone of WebFlux throughput. Sixteen threads handle 50,000 RADIUS packets per second — but only because each handler returns in microseconds. The moment you introduce a blocking call, that thread parks on kernel I/O. Sixteen packets arrive simultaneously: sixteen threads park, zero capacity remains. Every subsequent packet queues in the UDP socket buffer until the kernel drops it. RFC 2865 clients retransmit dropped packets. The retransmit storm makes the situation worse — a positive feedback loop toward complete collapse.\n\nThe fix is not architectural. It is a single import swap from MongoTemplate to ReactiveMongoTemplate. The reactive template returns a Mono<> in under a millisecond. The Netty thread is released immediately to handle the next packet.\n\nIn production we add two guardrails: @Blocking on any method that must never be called reactively — Spring throws at startup if violated — and BlockHound in the test suite, which fails immediately if any test path parks a thread."`,
+  c7:  `"Redis gives us sub-millisecond session reads — critical when processing 50,000 RADIUS packets per second. But Redis is volatile by design: a rolling cluster upgrade, a network partition, or memory pressure eviction can drop session state in seconds. This is an operational reality in every carrier deployment.\n\nWithout a fallback, the AAA Server defaults quota_used to zero on a cache miss. The subscriber's quota appears completely fresh. BNG receives an ACK, the session continues unrestricted, and the subscriber accumulates gigabytes beyond their plan limit. The CDR closes with the ghost session data — the operator delivers 18GB and bills for 10GB. Silent revenue leakage at carrier scale.\n\nWrite-through caching treats MongoDB as the system of record for quota state. Every interim-update write goes to Redis and MongoDB together. When Redis fails, the fallback reads MongoDB and gets the accurate current value immediately. The billing error window is zero — not 5 seconds, not 30 seconds: zero."`,
+  c8:  `"Per RFC 2866, BNG always sends cumulative octets since session start. At 300Mbps Service Provider Fiber speed, the 32-bit counter wraps every 1.8 minutes — in a 20-minute interval it wraps 11 times. RFC 2869 Gigawords handling is mandatory, not optional.\n\nAAA Server calculates delta using the Gigawords-aware formula and proxies only the delta to OCS. Because we send relative deltas, not absolute totals, the OCS operation 'balance = balance - delta' is commutative — order doesn't matter, no row locks needed. OCS processes thousands of concurrent deductions without contention.\n\nThe previous cumulative total is stored in Redis for fast lookup, with write-through to MongoDB for failover safety. If Redis fails, the fallback reads MongoDB and the delta calculation remains correct."`,
+  c9:  `"By Value is our most important performance decision. We actively ACCEPT eventual consistency for 90% of postpaid subscribers — that is a deliberate business choice, not a technical workaround. The 10% prepaid with low balances get synchronous OCS calls because we have zero tolerance for revenue leakage on prepaid.\n\nWithout this routing decision, we would need synchronous OCS calls for all 50 million subscribers. The OCS is designed for 5,000 synchronous calls per second — not 50,000. It would collapse immediately. By Value reduces OCS sync load by 90%, keeping it well within capacity while guaranteeing zero revenue leakage for the subscribers where it matters most.\n\nThe key insight: eventual consistency is perfectly acceptable for postpaid subscribers because they are billed monthly and any delta discrepancy reconciles at billing cycle close."`,
+  c10: `"OCS response handling is where all the Flow 2 concepts converge. The OCS has four possible responses, and each demands a completely different action from AAA Server.\n\nNormal ACK: do nothing, forward to BNG, wait for next interim. Threshold crossed at 50% or 90%: send an idempotent SMS notification using $addToSet — but critically, NO CoA, NO speed change. Quota exhausted at 100%: this is the enforcement path — update state to QUOTA_EXHAUSTED, send CoA Type 2 to BNG with FUP speed of 1Mbps, wait for CoA-ACK confirming hardware throttled, and only then publish the notification event for SMS.\n\nThe most dangerous confusion is between threshold and exhaustion. If you send a CoA at 50%, you have throttled a subscriber who still has half their data. If you skip enforcement at 100%, the subscriber uses data for free.\n\nOCS is the decision maker for all quota matters. AAA Server never independently decides to throttle."`,
+};
+
+// ─────────────────────────────────────────────
+// PER-CONCEPT INTERVIEW COMPONENTS
+// ─────────────────────────────────────────────
+function C2Interview() {
+  return <Interview text={`"We apply Outbox selectively based on latency profile. Flow 2 needs sub-500ms RADIUS response — polling lag makes Outbox unsuitable. Flow 1 is a business event — user waits on Processing screen — Outbox is appropriate.
+
+The critical insight: TTL watchdog alone cannot distinguish three crash scenarios. Scenario C is most dangerous — BNG hardware is upgraded but we mark FAILED and refund an active plan. Outbox solves all three by making CoA retryable from persistent MongoDB state.
+
+One additional coordination: when watchdog fires, it also marks related outbox rows ABANDONED — preventing a resuming relay from sending stale CoA commands to BNG.
+
+For the residual edge case — Scenario C plus relay failure — network divergence persists until the reconciliation job or the next RADIUS Interim-Update detects the mismatch. In telecom, 5-minute reconciliation is the standard window. But billing discrepancies always require human intervention — the automated job corrects the network, but only Revenue Assurance can determine the correct financial outcome for the subscriber. That is a deliberate boundary — billing decisions should never be fully automated at carrier scale."`} />;
+}
+
+function C3Interview() {
+  return <Interview text={`"The CoA-ACK is our pivot point — once BNG confirms, hardware is already at the new speed. When OptimisticLockingException occurs, we cannot simply re-read and save — the router is running at a speed that may no longer match the database.
+
+We check if fresh MongoDB state differs from what we told BNG. If admin changed the plan during our CoA window, we send a corrective CoA to realign hardware with admin's intent. Network state must always equal database state — that is a fundamental carrier-grade requirement.
+
+For audit and safety: corrective CoA is fully logged, ops team alerted, and rate-limited. Human oversight is monitoring and alerting — not manual approval per subscriber, which would be impossible at carrier scale."`} />;
+}
+
+function C4Interview() {
+  return <Interview text={`"Pessimistic View means we hide unconfirmed state from all downstream systems. Nobody sees success until hardware confirms it. We apply this in both provisioning and FUP enforcement — the subscriber gets the SMS about speed reduction only after BNG confirms the throttle via CoA-ACK.
+
+For FUP specifically: OCS is the decision maker — AAA Server is the enforcer. AAA Server proxies RADIUS accounting to OCS. OCS signals quota exhaustion via RADIUS accounting-response VSA attribute. AAA Server reads that instruction and sends enforcement CoA Type 2 to BNG. AAA Server never independently decides to throttle — it always waits for OCS instruction. This separation is fundamental: OCS owns quota decisions, AAA Server owns network enforcement, BNG owns hardware. OCS never talks to BNG directly — AAA Server is the only bridge.
+
+The business impact is clear: optimistic notification is the number one cause of subscriber complaints in broadband. User's app shows 150Mbps but they get 50Mbps — that is a support call. Pessimistic View eliminates that entirely at the cost of a few seconds of 'Processing...' on the screen."`} />;
+}
+
+function C6Interview() {
+  return <Interview text={`"The Netty event loop is the backbone of WebFlux throughput. Sixteen threads handle 50,000 RADIUS packets per second — but only because each handler returns in microseconds. The moment you introduce a blocking call, that thread parks on kernel I/O. Sixteen packets arrive simultaneously: sixteen threads park, zero capacity remains. Every subsequent packet queues in the UDP socket buffer until the kernel drops it. RFC 2865 clients retransmit dropped packets. The retransmit storm makes the situation worse — a positive feedback loop toward complete collapse.
+
+The fix is not architectural. It is a single import swap from MongoTemplate to ReactiveMongoTemplate. The reactive template returns a Mono<> in under a millisecond. The Netty thread is released immediately to handle the next packet. When MongoDB responds, the callback fires on whichever Netty thread is free at that moment. The event loop never accumulates debt.
+
+In production we add two guardrails: @Blocking on any method that must never be called reactively — Spring throws at startup if violated — and BlockHound in the test suite, which fails immediately if any test path parks a thread. Blocking calls in a reactive WebFlux pipeline are the most common root cause of carrier-grade throughput collapse we encounter."`} />;
+}
+
+function C7Interview() {
+  return <Interview text={`"Redis gives us sub-millisecond session reads — critical when processing 50,000 RADIUS packets per second. But Redis is volatile by design: a rolling cluster upgrade, a network partition, or memory pressure eviction can drop session state in seconds. This is an operational reality in every carrier deployment.
+
+Without a fallback, the AAA Server defaults quota_used to zero on a cache miss. The subscriber's quota appears completely fresh. BNG receives an ACK, the session continues unrestricted, and the subscriber accumulates gigabytes beyond their plan limit. The CDR closes with the ghost session data — the operator delivers 18GB and bills for 10GB. Silent revenue leakage at carrier scale.
+
+Write-through caching treats MongoDB as the system of record for quota state. Every interim-update write goes to Redis and MongoDB together. When Redis fails, the fallback reads MongoDB and gets the accurate current value immediately. The billing error window is zero — not 5 seconds, not 30 seconds: zero. The 2–5ms write overhead per update is the cost, and it is completely acceptable at our packet rate.
+
+On recovery, Redis re-syncs from MongoDB automatically. No manual intervention, no reconciliation job, no Revenue Assurance ticket from a billing discrepancy."`} />;
+}
+
+function C8Interview() {
+  return <Interview text={`"Per RFC 2866, BNG always sends cumulative octets since session start. At 300Mbps Service Provider Fiber speed, the 32-bit counter wraps every 1.8 minutes — in a 20-minute interval it wraps 11 times. RFC 2869 Gigawords handling is mandatory, not optional.
+
+AAA Server calculates delta using the Gigawords-aware formula and proxies only the delta to OCS. Because we send relative deltas, not absolute totals, the OCS operation 'balance = balance - delta' is commutative — order doesn't matter, no row locks needed. OCS processes thousands of concurrent deductions without contention.
+
+The previous cumulative total is stored in Redis for fast lookup, with write-through to MongoDB for failover safety. If Redis fails, the fallback reads MongoDB and the delta calculation remains correct. This is the same write-through pattern we use for session quota state."`} />;
+}
+
+function C9Interview() {
+  return <Interview text={`"By Value is our most important performance decision. We actively ACCEPT eventual consistency for 90% of postpaid subscribers — that is a deliberate business choice, not a technical workaround. The 10% prepaid with low balances get synchronous OCS calls because we have zero tolerance for revenue leakage on prepaid.
+
+Without this routing decision, we would need synchronous OCS calls for all 50 million subscribers. The OCS is designed for 5,000 synchronous calls per second — not 50,000. It would collapse immediately. By Value reduces OCS sync load by 90%, keeping it well within capacity while guaranteeing zero revenue leakage for the subscribers where it matters most.
+
+The key insight: eventual consistency is perfectly acceptable for postpaid subscribers because they are billed monthly and any delta discrepancy reconciles at billing cycle close. Prepaid subscribers spend their own pre-loaded balance — every megabyte must be accounted for in real time."`} />;
+}
+
+function C10Interview() {
+  return <Interview text={`"OCS response handling is where all the Flow 2 concepts converge. The OCS has four possible responses, and each demands a completely different action from AAA Server.
+
+Normal ACK: do nothing, forward to BNG, wait for next interim. Threshold crossed at 50% or 90%: send an idempotent SMS notification using $addToSet — but critically, NO CoA, NO speed change. The subscriber still has data remaining. Quota exhausted at 100%: this is the enforcement path — update state to QUOTA_EXHAUSTED, send CoA Type 2 to BNG with FUP speed of 1Mbps, wait for CoA-ACK confirming hardware throttled, and only then publish the notification event for SMS.
+
+The most dangerous confusion is between threshold and exhaustion. If you send a CoA at 50%, you have throttled a subscriber who still has half their data. If you skip enforcement at 100%, the subscriber uses data for free. And if you notify before CoA-ACK at 100%, you violate Pessimistic View — the SMS says 'throttled' but BNG may not have applied it yet.
+
+OCS is the decision maker for all quota matters. AAA Server never independently decides to throttle — it reads the OCS signal via RADIUS accounting-response VSA attribute and enforces accordingly."`} />;
+}
+
+// ─────────────────────────────────────────────
 // EXPORTED TAB SYSTEM
 // ─────────────────────────────────────────────
-export function getConceptTabs(conceptId) {
-  if (conceptId === "c1") {
-    return [
-      { id: "problem",   label: "Problem",   icon: "📝" },
-      { id: "precheck",  label: "Pre-Check", icon: "🔍" },
-      { id: "mapping",   label: "Ch4 Map",   icon: "🗺️" },
-      { id: "prodnotes", label: "Prod Notes",icon: "⚙️" },
-      { id: "interview", label: "Interview", icon: "🎯" },
-    ];
-  }
-  return [
-    { id: "problem", label: "Problem", icon: "📝" },
-    { id: "details", label: "Details", icon: "ℹ️"  },
-  ];
+const TABS_ALL = [
+  { id: "problem",   label: "Problem Statement",   icon: "📋" },
+  { id: "notes",     label: "Study Notes",          icon: "📖" },
+  { id: "interview", label: "Interview Statement",  icon: "🎯" },
+];
+
+export function getConceptTabs() {
+  return TABS_ALL;
 }
 
 export function ConceptTabContent({ conceptId, tabId }) {
@@ -804,16 +898,10 @@ export function ConceptTabContent({ conceptId, tabId }) {
     return <ConceptProblem id={conceptId} color={concept.color} />;
   }
 
-  if (conceptId === "c1") {
-    if (tabId === "precheck")  return <C1PreCheck />;
-    if (tabId === "mapping")   return <C1Mapping />;
-    if (tabId === "prodnotes") return <C1ProdNotes />;
-    if (tabId === "interview") return <C1Interview />;
-  }
-
-  if (tabId === "details") {
+  if (tabId === "notes") {
     return (
-      <div style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace", color: "#e2e8f0" }}>
+      <div style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace", color: "#e2e8f0", display: "flex", flexDirection: "column", gap: 10 }}>
+        {conceptId === "c1"  && <C1Info />}
         {conceptId === "c2"  && <C2Info />}
         {conceptId === "c3"  && <C3Info />}
         {conceptId === "c4"  && <C4Info />}
@@ -822,6 +910,22 @@ export function ConceptTabContent({ conceptId, tabId }) {
         {conceptId === "c8"  && <C8Info />}
         {conceptId === "c9"  && <C9Info />}
         {conceptId === "c10" && <C10Info />}
+      </div>
+    );
+  }
+
+  if (tabId === "interview") {
+    return (
+      <div style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace", color: "#e2e8f0" }}>
+        {conceptId === "c1"  && <C1Interview />}
+        {conceptId === "c2"  && <C2Interview />}
+        {conceptId === "c3"  && <C3Interview />}
+        {conceptId === "c4"  && <C4Interview />}
+        {conceptId === "c6"  && <C6Interview />}
+        {conceptId === "c7"  && <C7Interview />}
+        {conceptId === "c8"  && <C8Interview />}
+        {conceptId === "c9"  && <C9Interview />}
+        {conceptId === "c10" && <C10Interview />}
       </div>
     );
   }
@@ -863,66 +967,45 @@ const Interview = ({ text }) => (
   </div>
 );
 
-function C1PreCheck() {
-  return (
-    <InfoBox title="Pre-Check Order — Critical" color="#f59e0b">
-      {[
-        { step: "Check 1", title: "Terminal State?", code: 'SUSPENDED / TERMINATED', action: "Fail fast\nNo lock, no CoA", color: "#ef4444" },
-        { step: "Check 2", title: "Concurrent Op?", code: 'state ends with _IN_PROGRESS', action: "409 Conflict\nRetry later", color: "#f59e0b" },
-        { step: "Check 3", title: "Safe to proceed", code: 'state == ACTIVE', action: "Acquire lock\nSend CoA", color: "#22c55e" },
-      ].map(it => (
-        <div key={it.step} style={{ marginBottom: 8, padding: "6px 10px", background: "#0d1625", borderRadius: 6, border: `1px solid ${it.color}33` }}>
-          <div style={{ fontSize: 9, color: it.color, fontWeight: 700, marginBottom: 2 }}>{it.step} — {it.title}</div>
-          <div style={{ fontSize: 8.5, color: "#64748b", fontFamily: "monospace", marginBottom: 4 }}>{it.code}</div>
-          <div style={{ fontSize: 8.5, color: it.color, whiteSpace: "pre" }}>{it.action}</div>
-        </div>
-      ))}
-    </InfoBox>
-  );
-}
-
-function C1Mapping() {
-  return (
-    <InfoBox title="Chapter 4 Transaction Mapping" color="#3b82f6">
-      {[
-        { label: "Compensatable",    desc: "Booster Purchase — can be refunded",                 color: "#3b82f6" },
-        { label: "Pivot Transaction", desc: "Suspension Decision — business rule decides",        color: "#f59e0b" },
-        { label: "Compensating Tx",  desc: "Refund — CRM reverses the charge",                   color: "#a855f7" },
-        { label: "Semantic Lock",    desc: "UPGRADE_IN_PROGRESS blocks concurrent writes",        color: "#fb923c" },
-        { label: "Pessimistic View", desc: "Notify only after CoA-ACK hardware confirm",          color: "#22c55e" },
-      ].map(it => (
-        <div key={it.label} style={{ display: "flex", gap: 8, marginBottom: 7, alignItems: "flex-start" }}>
-          <div style={{ width: 7, height: 7, borderRadius: "50%", background: it.color, marginTop: 3, flexShrink: 0 }} />
-          <div>
-            <div style={{ fontSize: 9.5, color: it.color, fontWeight: 700 }}>{it.label}</div>
-            <div style={{ fontSize: 8.5, color: "#475569" }}>{it.desc}</div>
-          </div>
-        </div>
-      ))}
-    </InfoBox>
-  );
-}
-
-function C1ProdNotes() {
-  return (
-    <div style={{ background:"#080e1c", border:"1px solid #f59e0b33", borderRadius:8, padding:14 }}>
-      <div style={{ fontSize:10, color:"#f59e0b", fontWeight:700, letterSpacing:1.5, marginBottom:10, textTransform:"uppercase" }}>Production Notes</div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-        <div style={{ padding:"8px 10px", background:"#0d1625", borderRadius:6, border:"1px solid #f59e0b33" }}>
-          <div style={{ fontSize:9, color:"#f59e0b", fontWeight:700, marginBottom:4 }}>Brief Speed Window (Acceptable)</div>
-          <div style={{ fontSize:8.5, color:"#475569", lineHeight:1.7 }}>Between booster CoA-ACK and suspension CoA-ACK there is a brief window (milliseconds to seconds) where user receives 150Mbps on a suspended account. Acceptable because: suspension CoA sent immediately after pivot decision, permanent corruption WITHOUT lock is far worse, and business outcome is correct — hardware suspended + refund.</div>
-        </div>
-        <div style={{ padding:"8px 10px", background:"#0d1625", borderRadius:6, border:"1px solid #a855f733" }}>
-          <div style={{ fontSize:9, color:"#a855f7", fontWeight:700, marginBottom:4 }}>CRM Resolution — Two Options</div>
-          <div style={{ fontSize:8.5, color:"#475569", lineHeight:1.7 }}>
-            <span style={{ color:"#22c55e", fontWeight:700 }}>OPTION 1 (most common):</span> Full suspension — refund booster payment, deactivate booster quota, SMS: "Booster could not be activated due to suspension. Amount refunded."<br/><br/>
-            <span style={{ color:"#a855f7", fontWeight:700 }}>OPTION 2 (operator choice):</span> Hold booster — reserved, activates automatically when dues cleared. SMS: "Booster reserved. Will activate when account restored."
-          </div>
-        </div>
+// ─────────────────────────────────────────────
+// STUDY NOTES LAYOUT COMPONENTS
+// ─────────────────────────────────────────────
+const SH = ({ text, color }) => (
+  <div style={{ fontSize: 11, fontWeight: 700, color, letterSpacing: 0.5, marginBottom: 10, paddingBottom: 6, borderBottom: `1px solid ${color}55` }}>
+    ⚡ Solution: {text}
+  </div>
+);
+const SP = ({ children, color }) => (
+  <div style={{ background: "#0a1628", border: `1px solid ${color}55`, borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 9.5, color: "#94a3b8", lineHeight: 1.85 }}>
+    {children}
+  </div>
+);
+const LBox = ({ title, color, items }) => (
+  <div style={{ background: "#080e1c", border: `1px solid ${color}`, borderRadius: 8, padding: "10px 12px" }}>
+    <div style={{ fontSize: 9.5, color, fontWeight: 700, marginBottom: 8 }}>{title}</div>
+    {items.map((item, i) => (
+      <div key={i} style={{ fontSize: 8.5, color: "#94a3b8", marginBottom: 4, display: "flex", gap: 6, lineHeight: 1.6 }}>
+        <span style={{ color, flexShrink: 0 }}>•</span><span>{item}</span>
       </div>
-    </div>
-  );
-}
+    ))}
+  </div>
+);
+const BAT = ({ before, after }) => (
+  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+    <LBox title="❌ Before Solution" color="#ef4444" items={before} />
+    <LBox title="✅ After Solution" color="#22c55e" items={after} />
+  </div>
+);
+const PBox = ({ title, color, items }) => (
+  <div style={{ background: "#080e1c", border: `1px solid ${color}`, borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
+    <div style={{ fontSize: 9.5, color, fontWeight: 700, marginBottom: 8 }}>{title}</div>
+    {items.map((item, i) => (
+      <div key={i} style={{ fontSize: 8.5, color: "#94a3b8", marginBottom: 5, display: "flex", gap: 6, lineHeight: 1.6 }}>
+        <span style={{ color, flexShrink: 0 }}>→</span><span>{item}</span>
+      </div>
+    ))}
+  </div>
+);
 
 function C1Interview() {
   return (
@@ -940,223 +1023,151 @@ This maps to Chapter 4: booster = Compensatable, suspension = Pivot, refund = Co
 
 function C1Info() {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <Row items={[<C1PreCheck />, <C1Mapping />]} />
-      <C1ProdNotes />
-      <C1Interview />
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <SH text="Semantic Lock: Flag record UPGRADE_IN_PROGRESS before CoA to block concurrent saga writes" color="#3b82f6" />
+      <SP color="#3b82f6">
+        Without a lock, two concurrent sagas (booster + suspension) both read <span style={{color:"#f59e0b"}}>ACTIVE</span> and silently overwrite each other — the suspended account gets 150Mbps with no refund ever triggered. The Semantic Lock atomically sets <span style={{color:"#3b82f6"}}>UPGRADE_IN_PROGRESS</span> so any concurrent operation either 409s and retries, or fails fast on a terminal state. Both race orderings resolve correctly.
+      </SP>
+      <BAT
+        before={[
+          "Both operations read state = ACTIVE simultaneously",
+          "Suspension writes SUSPENDED first",
+          "Booster CoA-ACK arrives → overwrites state back to ACTIVE",
+          "Suspended account gets 150Mbps — BSS layer sees no conflict",
+          "No compensating transaction (refund) ever triggered",
+        ]}
+        after={[
+          "Booster sets UPGRADE_IN_PROGRESS lock before sending CoA",
+          "Suspension reads IN_PROGRESS → returns 409 → retries after booster",
+          "OR: Suspension wins → state=SUSPENDED → booster pre-check reads SUSPENDED → fails fast, no CoA sent",
+          "Either race ordering produces a correct business outcome",
+          "Refund triggered in conflict case after suspension CoA-ACK",
+        ]}
+      />
+      <PBox title="⚙️ Extra Points" color="#f59e0b" items={[
+        "Pre-check order: 1) Terminal state (SUSPENDED/TERMINATED)? → fail fast, no CoA  2) IN_PROGRESS? → 409 conflict, retry  3) ACTIVE? → acquire lock and proceed",
+        "Chapter 4 mapping: Booster = Compensatable Transaction, Suspension = Pivot Transaction, Refund = Compensating Transaction",
+        "When suspension wins: suspension must also send a CoA to BNG — DB state change alone does not change hardware",
+        "Pessimistic View applied: conflict event published only after suspension CoA-ACK is received",
+      ]} />
+      <PBox title="💡 Take Away" color="#3b82f6" items={[
+        "Brief speed window (ms) between booster CoA-ACK and suspension CoA-ACK is acceptable — permanent corruption without lock is far worse",
+        "CRM resolution: Option 1 (most common) — full refund + deactivate booster. Option 2 — hold booster, activates when account restored",
+        "The deeper insight: without the lock, no compensating transaction is EVER triggered — corruption is silent and permanent",
+      ]} />
     </div>
   );
 }
 
 function C2Info() {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <Row items={[
-        <InfoBox title="Why Selective — Not Universal" color="#f59e0b">
-          {[
-            { title: "✅ Flow 1 — Outbox Suitable", color: "#22c55e", items: ["User on Processing screen — can wait 1-2s", "Business event — not real-time", "Outbox relay lag = ACCEPTABLE", "Guarantees CoA delivery after any pod crash"] },
-            { title: "❌ Flow 2 — Outbox Not Suitable", color: "#ef4444", items: ["BNG requires RADIUS response < 500ms", "Live network traffic — cannot delay", "Polling relay lag = UNACCEPTABLE", "Different coordination used"] },
-          ].map(c => (
-            <div key={c.title} style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 9, color: c.color, fontWeight: 700, marginBottom: 6 }}>{c.title}</div>
-              <Bullet color={c.color} items={c.items} bad={c.color === "#ef4444"} />
-            </div>
-          ))}
-        </InfoBox>,
-        <InfoBox title="Outbox Status Machine" color="#06b6d4">
-          {[
-            { status: "PENDING",   color: "#f59e0b", desc: "Written atomically with semantic lock" },
-            { status: "SENT",      color: "#22c55e", desc: "CoA confirmed by BNG — success" },
-            { status: "FAILED",    color: "#ef4444", desc: "Max retries exhausted → trigger refund" },
-            { status: "ABANDONED", color: "#64748b", desc: "Watchdog set — relay ignores — no stale CoA" },
-          ].map((it, i, arr) => (
-            <div key={it.status}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "#0d1625", borderRadius: 6, border: `1px solid ${it.color}44` }}>
-                <div style={{ width: 8, height: 8, borderRadius: "50%", background: it.color, flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontSize: 9.5, color: it.color, fontWeight: 700 }}>{it.status}</div>
-                  <div style={{ fontSize: 8.5, color: "#475569" }}>{it.desc}</div>
-                </div>
-              </div>
-              {i < arr.length - 1 && <div style={{ fontSize: 9, color: "#1e3a5f", padding: "2px 0 2px 14px" }}>↓</div>}
-            </div>
-          ))}
-        </InfoBox>,
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <SH text="Transactional Outbox: Write CoA command to MongoDB atomically with state change so delivery survives any pod crash" color="#06b6d4" />
+      <SP color="#06b6d4">
+        TTL watchdog alone cannot distinguish three crash scenarios. <span style={{color:"#ef4444"}}>Scenario C</span> is the most dangerous — pod crashes after CoA-ACK but before MongoDB commit. BNG hardware is already upgraded but the watchdog marks state = <span style={{color:"#ef4444"}}>FAILED</span> and refunds an active plan. The Outbox writes the CoA payload atomically with the state change, making delivery retryable independent of pod lifecycle.
+      </SP>
+      <BAT
+        before={[
+          "Scenario A: crash before CoA sent → watchdog recovers ✓",
+          "Scenario B: crash waiting for CoA-ACK → watchdog recovers ✓",
+          "Scenario C: crash after CoA-ACK, before MongoDB commit → BNG at 150Mbps, watchdog marks FAILED, refunds active plan ✗",
+          "Watchdog cannot detect which scenario occurred — treats all as Scenario A",
+          "Billing error: user refunded for plan actively running on BNG hardware",
+        ]}
+        after={[
+          "Outbox row (CoA payload) written atomically with UPGRADE_IN_PROGRESS state",
+          "Relay polls outbox and sends CoA — retries on any failure",
+          "On CoA-ACK: relay marks outbox SENT, state updated to ACTIVE",
+          "Scenario C crash: watchdog marks outbox ABANDONED → relay ignores stale row — no false refund",
+          "All 3 crash scenarios handled safely and automatically",
+        ]}
+      />
+      <PBox title="⚙️ Extra Points" color="#f59e0b" items={[
+        "Selective application: Flow 1 (user on Processing screen) = suitable, relay lag acceptable. Flow 2 (RADIUS sub-500ms) = NOT suitable, polling relay lag unacceptable",
+        "Outbox status machine: PENDING (written with lock) → SENT (CoA-ACK received) → FAILED (max retries → trigger refund) / ABANDONED (watchdog fired → relay ignores)",
+        "When watchdog fires it also marks related outbox rows ABANDONED — prevents stale CoA delivery from a resuming relay",
+        "Residual edge case: Scenario C + relay failure → divergence detected by reconciliation job (≤5min) or next RADIUS Interim-Update",
       ]} />
-
-      {/* ── Residual Divergence Edge Case ── */}
-      <div style={{ background:"#080e1c", border:"1px solid #ef444433", borderRadius:8, padding:14 }}>
-        <div style={{ fontSize:10, color:"#ef4444", fontWeight:700, letterSpacing:1.5, marginBottom:10, textTransform:"uppercase" }}>
-          ⚠️ Residual Divergence — When Watchdog Fires But Network ≠ DB
-        </div>
-        <div style={{ fontSize:9.5, color:"#94a3b8", lineHeight:1.8, marginBottom:12 }}>
-          The outbox + watchdog coordination solves the common case. But one edge case remains: <span style={{color:"#ef4444",fontWeight:700}}>Scenario C crash + outbox relay also fails</span>. Watchdog fires after 5 min → DB = <span style={{color:"#ef4444"}}>FAILED</span>, outbox = <span style={{color:"#64748b"}}>ABANDONED</span> — but BNG hardware is still running at <span style={{color:"#f59e0b"}}>150Mbps</span>. CRM refunds the user for a plan that IS active on the network.
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-          <div style={{ padding:"10px 12px", background:"#0d1625", borderRadius:6, border:"1px solid #06b6d433" }}>
-            <div style={{ fontSize:9, color:"#06b6d4", fontWeight:700, marginBottom:8 }}>🔄 Path 1 — Automated Reconciliation (≤5 min)</div>
-            {[
-              { t:"Reconciliation job runs every 5 min", c:"#06b6d4" },
-              { t:"Queries MongoDB: state=FAILED + session still active on BNG", c:"#94a3b8" },
-              { t:"Checks BNG session policy via management plane (SNMP/NETCONF)", c:"#94a3b8" },
-              { t:"Mismatch detected → send corrective CoA → throttle to base speed", c:"#f59e0b" },
-              { t:"DB updated to match network reality → NOC alert raised", c:"#22c55e" },
-            ].map((it,i) => (
-              <div key={i} style={{ fontSize:8.5, color:it.c, marginBottom:5, display:"flex", gap:6 }}>
-                <span style={{color:"#06b6d4",flexShrink:0}}>→</span>{it.t}
-              </div>
-            ))}
-          </div>
-          <div style={{ padding:"10px 12px", background:"#0d1625", borderRadius:6, border:"1px solid #a855f733" }}>
-            <div style={{ fontSize:9, color:"#a855f7", fontWeight:700, marginBottom:8 }}>👤 Path 2 — RADIUS-Triggered Detection (≤Interim interval)</div>
-            {[
-              { t:"BNG sends next RADIUS Interim-Update (every 20–30 min at SP)", c:"#94a3b8" },
-              { t:"AAA Server receives packet: session ACTIVE at 150Mbps", c:"#94a3b8" },
-              { t:"DB lookup: subscriber state = FAILED — no active booster", c:"#ef4444" },
-              { t:"Mismatch → corrective CoA sent immediately to BNG", c:"#f59e0b" },
-              { t:"Kafka alert → Revenue Assurance team reviews billing", c:"#a855f7" },
-            ].map((it,i) => (
-              <div key={i} style={{ fontSize:8.5, color:it.c, marginBottom:5, display:"flex", gap:6 }}>
-                <span style={{color:"#a855f7",flexShrink:0}}>→</span>{it.t}
-              </div>
-            ))}
-          </div>
-        </div>
-        <div style={{ marginTop:10, padding:"8px 12px", background:"#1a0808", borderRadius:6, border:"1px solid #ef444433" }}>
-          <div style={{ fontSize:9, color:"#ef4444", fontWeight:700, marginBottom:6 }}>🚨 Human Intervention — Required for Billing Discrepancy</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
-            {[
-              { role:"NOC / Ops", action:"Receives alert when watchdog releases > threshold. Reviews session logs, confirms divergence, triggers manual reconciliation if automated job missed it.", color:"#f87171" },
-              { role:"Revenue Assurance", action:"Reviews billing record — user was refunded for active plan. Determines correct billing outcome. Issues manual credit or re-charges. Audit trail required per TEC spec.", color:"#fb923c" },
-              { role:"Why automated alone is insufficient", action:"Billing correction requires human judgment — automated job can fix the network, but only Revenue Assurance can determine the correct financial outcome for the subscriber.", color:"#94a3b8" },
-            ].map(it => (
-              <div key={it.role} style={{ padding:"6px 8px", background:"#0d1625", borderRadius:5, border:`1px solid ${it.color}33` }}>
-                <div style={{ fontSize:8.5, color:it.color, fontWeight:700, marginBottom:4 }}>{it.role}</div>
-                <div style={{ fontSize:8, color:"#475569", lineHeight:1.6 }}>{it.action}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <Interview text={`"We apply Outbox selectively based on latency profile. Flow 2 needs sub-500ms RADIUS response — polling lag makes Outbox unsuitable. Flow 1 is a business event — user waits on Processing screen — Outbox is appropriate.
-
-The critical insight: TTL watchdog alone cannot distinguish three crash scenarios. Scenario C is most dangerous — BNG hardware is upgraded but we mark FAILED and refund an active plan. Outbox solves all three by making CoA retryable from persistent MongoDB state.
-
-One additional coordination: when watchdog fires, it also marks related outbox rows ABANDONED — preventing a resuming relay from sending stale CoA commands to BNG.
-
-For the residual edge case — Scenario C plus relay failure — network divergence persists until the reconciliation job or the next RADIUS Interim-Update detects the mismatch. In telecom, 5-minute reconciliation is the standard window. But billing discrepancies always require human intervention — the automated job corrects the network, but only Revenue Assurance can determine the correct financial outcome for the subscriber. That is a deliberate boundary — billing decisions should never be fully automated at carrier scale."`} />
+      <PBox title="💡 Take Away" color="#06b6d4" items={[
+        "Billing discrepancies always require human intervention — automated job fixes the network, only Revenue Assurance determines the correct financial outcome",
+        "Outbox guarantees at-least-once CoA delivery — idempotency at BNG prevents duplicate hardware changes",
+        "The outbox pattern is applied selectively, not universally — latency profile of each flow determines suitability",
+      ]} />
     </div>
   );
 }
 
 function C3Info() {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <Row items={[
-        <InfoBox title="GR Replication Context" color="#06b6d4">
-          <div style={{ fontSize: 9.5, color: "#67e8f9", lineHeight: 1.7, marginBottom: 10 }}>
-            AAA Server runs Active-Active GR across Mumbai and Gujarat data centers. MongoDB replication lag: 20–40ms typical. During this window, two DCs can hold different versions of the same subscriber.
-          </div>
-          {[
-            { label: "CoA-ACK is the Pivot Point", desc: "Once BNG confirms, hardware is already upgraded. Cannot just re-read and save.", color: "#06b6d4" },
-            { label: "Check Speed After Conflict", desc: "If fresh DB speed ≠ CoA speed → admin changed during window → corrective CoA needed.", color: "#f59e0b" },
-            { label: "No Corrective CoA if Same", desc: "If speeds match → just re-save with fresh version. No hardware change needed.", color: "#22c55e" },
-            { label: "Audit + Monitoring", desc: "Corrective CoA must be logged, alerted to ops team, rate-limited per hour.", color: "#a855f7" },
-          ].map(it => (
-            <div key={it.label} style={{ marginBottom: 8, display: "flex", gap: 8, alignItems: "flex-start" }}>
-              <div style={{ width: 7, height: 7, borderRadius: "50%", background: it.color, marginTop: 3, flexShrink: 0 }} />
-              <div>
-                <div style={{ fontSize: 9.5, color: it.color, fontWeight: 700 }}>{it.label}</div>
-                <div style={{ fontSize: 8.5, color: "#475569" }}>{it.desc}</div>
-              </div>
-            </div>
-          ))}
-        </InfoBox>,
-        <InfoBox title="Decision Tree After OptimisticLockingException" color="#f59e0b">
-          {[
-            { q: "Did we receive CoA-ACK?", a: "YES → BNG hardware is already changed. Cannot just re-save.", color: "#f59e0b" },
-            { q: "Read fresh DB. Does speed match?", a: "MATCH → re-save only. No corrective CoA.", color: "#22c55e" },
-            { q: "Does speed differ?", a: "DIFFER → admin changed during window. Send corrective CoA to BNG.", color: "#ef4444" },
-            { q: "Corrective CoA-ACK received?", a: "YES → save with fresh version. Network = Database. ✅", color: "#22c55e" },
-          ].map((it, i) => (
-            <div key={i} style={{ marginBottom: 8, padding: "6px 10px", background: "#0d1625", borderRadius: 6, border: `1px solid ${it.color}33` }}>
-              <div style={{ fontSize: 8.5, color: "#64748b", marginBottom: 2 }}>Q{i + 1}: {it.q}</div>
-              <div style={{ fontSize: 9, color: it.color, fontWeight: 600 }}>→ {it.a}</div>
-            </div>
-          ))}
-        </InfoBox>,
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <SH text="@Version Optimistic Lock: Detect concurrent GR writes after CoA-ACK and send corrective CoA if hardware drifted from database" color="#f59e0b" />
+      <SP color="#f59e0b">
+        AAA Server runs Active-Active GR across two data centres with <span style={{color:"#f59e0b"}}>20–40ms MongoDB replication lag</span>. When Gujarat's save throws <span style={{color:"#ef4444"}}>OptimisticLockingException</span> after CoA-ACK, hardware is already upgraded. Simply re-saving would silently overwrite Mumbai's admin change — network and database would diverge permanently with no error and no alert.
+      </SP>
+      <BAT
+        before={[
+          "Gujarat holds @Version=5, sends CoA to upgrade to 150Mbps",
+          "Admin in Mumbai emergency-downgrades: saves @Version=6, speed=100Mbps",
+          "Gujarat receives CoA-ACK, blindly re-saves @Version=5, speed=150Mbps",
+          "Admin's change silently overwritten — no error, no alert raised",
+          "Network runs 150Mbps, database says 100Mbps — permanent invisible corruption",
+        ]}
+        after={[
+          "OptimisticLockingException thrown on Gujarat's stale @Version=5 save",
+          "Re-read fresh MongoDB state",
+          "QUOTA_EXHAUSTED? → OCS is authority, no corrective CoA, just re-save with fresh @Version",
+          "ACTIVE + speed differs? → admin changed during CoA window → send corrective CoA to realign hardware",
+          "ACTIVE + speed matches? → safe to re-save with fresh @Version only",
+        ]}
+      />
+      <PBox title="⚙️ Extra Points" color="#06b6d4" items={[
+        "CoA-ACK is the pivot point — once BNG confirms, hardware is already changed. Cannot just re-read and save blindly",
+        "OCS is the quota authority — never send corrective CoA that overrides an OCS throttle (QUOTA_EXHAUSTED state takes priority over admin speed)",
+        "All corrective CoA activity must be fully logged, ops team alerted, and rate-limited per hour",
       ]} />
-      <Interview text={`"The CoA-ACK is our pivot point — once BNG confirms, hardware is already at the new speed. When OptimisticLockingException occurs, we cannot simply re-read and save — the router is running at a speed that may no longer match the database.
-
-We check if fresh MongoDB state differs from what we told BNG. If admin changed the plan during our CoA window, we send a corrective CoA to realign hardware with admin's intent. Network state must always equal database state — that is a fundamental carrier-grade requirement.
-
-For audit and safety: corrective CoA is fully logged, ops team alerted, and rate-limited. Human oversight is monitoring and alerting — not manual approval per subscriber, which would be impossible at carrier scale."`} />
+      <PBox title="💡 Take Away" color="#f59e0b" items={[
+        "Network state MUST always equal database state — this is a carrier-grade non-negotiable requirement",
+        "Human oversight = monitoring and alerting, not manual approval per subscriber (impossible at 50M scale)",
+        "The 3-case state-first check is the key insight: not just 'retry' but 'what does the hardware need to do right now?'",
+      ]} />
     </div>
   );
 }
 
 function C4Info() {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <Row items={[
-        <InfoBox title="Where Pessimistic View Applies" color="#a855f7">
-          {[
-            { flow: "Flow 1 — Booster", trigger: "BoosterSuccessEvent", wait: "CoA-ACK from BNG", color: "#22c55e" },
-            { flow: "Flow 1 — Conflict", trigger: "HardwareUpgradeConflictEvent", wait: "Suspension CoA-ACK from BNG", color: "#f59e0b" },
-            { flow: "Flow 2 — FUP 100%", trigger: "ThresholdCrossedEvent (100%)", wait: "Throttle CoA-ACK from BNG", color: "#ef4444" },
-          ].map(it => (
-            <div key={it.flow} style={{ marginBottom: 8, padding: "8px 10px", background: "#0d1625", borderRadius: 6, border: `1px solid ${it.color}33` }}>
-              <div style={{ fontSize: 9.5, color: it.color, fontWeight: 700, marginBottom: 4 }}>{it.flow}</div>
-              <div style={{ fontSize: 8.5, color: "#475569", marginBottom: 2 }}>Event: <span style={{ color: "#94a3b8" }}>{it.trigger}</span></div>
-              <div style={{ fontSize: 8.5, color: "#475569" }}>Waits for: <span style={{ color: it.color }}>{it.wait}</span></div>
-            </div>
-          ))}
-        </InfoBox>,
-        <InfoBox title="Business Impact" color="#ef4444">
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, marginBottom: 6 }}>❌ Optimistic Notification</div>
-            <Bullet color="#ef4444" bad items={[
-              "App shows success before hardware confirms",
-              "BNG reboot → CoA lost → user at slow speed",
-              "Support calls spike — app lied to user",
-              "#1 cause of subscriber complaints in broadband",
-            ]} />
-          </div>
-          <div>
-            <div style={{ fontSize: 9, color: "#22c55e", fontWeight: 700, marginBottom: 6 }}>✅ Pessimistic View</div>
-            <Bullet color="#22c55e" items={[
-              "User waits on Processing screen briefly",
-              "Success confirmed by hardware before shown",
-              "No false promises — trust maintained",
-              "FUP SMS sent after throttle confirmed",
-            ]} />
-          </div>
-        </InfoBox>,
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <SH text="Pessimistic View: Hold all downstream notifications until BNG hardware confirms via CoA-ACK" color="#a855f7" />
+      <SP color="#a855f7">
+        Optimistic notification — telling the app "success" before BNG confirms — is the <span style={{color:"#ef4444"}}>#1 cause of subscriber complaints</span> in broadband. If BNG reboots after the DB write but before CoA-ACK, the subscriber's app shows 150Mbps but the network delivers 50Mbps. Pessimistic View holds every downstream event (CRM, SMS, notifications) until CoA-ACK is physically received from BNG.
+      </SP>
+      <BAT
+        before={[
+          "BoosterSuccessEvent published immediately after DB write",
+          "App shows 'Activated — 150Mbps' to subscriber",
+          "BNG reboots, CoA is lost, hardware stays at 50Mbps",
+          "Subscriber complains — #1 cause of broadband support calls",
+          "FUP: SMS says 'throttled' before BNG confirms enforcement",
+        ]}
+        after={[
+          "BoosterSuccessEvent held until CoA-ACK received from BNG",
+          "User sees 'Processing…' for a few seconds",
+          "Success shown only when hardware physically confirms",
+          "FUP throttle SMS sent only after throttle CoA-ACK received",
+          "Zero false promises — trust maintained at every interaction",
+        ]}
+      />
+      <PBox title="⚙️ Extra Points" color="#0ea5e9" items={[
+        "Flow 1: BoosterSuccessEvent (booster) and HardwareUpgradeConflictEvent (conflict) — both wait for CoA-ACK before publishing",
+        "Flow 2 at 100%: ThresholdCrossedEvent notification held until throttle CoA-ACK confirmed by BNG hardware",
+        "OCS = Decision Maker (evaluates quota, signals via RADIUS VSA attribute). AAA = Enforcer (sends CoA on OCS signal). BNG = Hardware owner (confirms via CoA-ACK)",
+        "AAA Server NEVER independently decides to throttle — always reads and follows OCS instruction via VSA attribute",
       ]} />
-
-      {/* ── OCS Role Separation ── */}
-      <div style={{ background:"#080e1c", border:"1px solid #0ea5e933", borderRadius:8, padding:14, marginTop:4 }}>
-        <div style={{ fontSize:10, color:"#0ea5e9", fontWeight:700, letterSpacing:1.5, marginBottom:10, textTransform:"uppercase" }}>OCS = Decision Maker, AAA = Enforcer, BNG = Hardware</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-          {[
-            { role:"OCS (Online Charging)", desc:"Evaluates quota balance. Signals exhaustion via RADIUS accounting-response VSA attribute. The DECISION MAKER for quota.", color:"#f59e0b" },
-            { role:"AAA Server (Enforcer)", desc:"Proxies RADIUS accounting to OCS. READS the OCS signal — never independently decides to throttle. Sends CoA Type 2 to BNG on OCS instruction.", color:"#0ea5e9" },
-            { role:"BNG Router (Hardware)", desc:"Applies QoS policy to subscriber port. Confirms enforcement via CoA-ACK. Owns the physical network layer.", color:"#22c55e" },
-          ].map(it => (
-            <div key={it.role} style={{ padding:"8px 10px", background:"#0d1625", borderRadius:6, border:`1px solid ${it.color}33` }}>
-              <div style={{ fontSize:9, color:it.color, fontWeight:700, marginBottom:4 }}>{it.role}</div>
-              <div style={{ fontSize:8.5, color:"#475569", lineHeight:1.6 }}>{it.desc}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <Interview text={`"Pessimistic View means we hide unconfirmed state from all downstream systems. Nobody sees success until hardware confirms it. We apply this in both provisioning and FUP enforcement — the subscriber gets the SMS about speed reduction only after BNG confirms the throttle via CoA-ACK.
-
-For FUP specifically: OCS is the decision maker — AAA Server is the enforcer. AAA Server proxies RADIUS accounting to OCS. OCS signals quota exhaustion via RADIUS accounting-response VSA attribute. AAA Server reads that instruction and sends enforcement CoA Type 2 to BNG. AAA Server never independently decides to throttle — it always waits for OCS instruction. This separation is fundamental: OCS owns quota decisions, AAA Server owns network enforcement, BNG owns hardware. OCS never talks to BNG directly — AAA Server is the only bridge.
-
-The business impact is clear: optimistic notification is the number one cause of subscriber complaints in broadband. User's app shows 150Mbps but they get 50Mbps — that is a support call. Pessimistic View eliminates that entirely at the cost of a few seconds of 'Processing...' on the screen."`} />
+      <PBox title="💡 Take Away" color="#a855f7" items={[
+        "Cost: a few seconds of 'Processing…' on the screen",
+        "Gain: zero false promises, no support escalations, subscriber trust maintained permanently",
+        "The OCS→AAA→BNG role separation is a carrier-grade architecture principle — no layer bypasses its designated role",
+      ]} />
     </div>
   );
 }
@@ -1165,57 +1176,38 @@ The business impact is clear: optimistic notification is the number one cause of
 // C6 INFO: Reactive Event Loop
 // ─────────────────────────────────────────────
 function C6Info() {
-  const BulletItem = ({ label, desc, color }) => (
-    <div style={{ display:"flex", gap:8, marginBottom:7, alignItems:"flex-start" }}>
-      <div style={{ width:7, height:7, borderRadius:"50%", background:color, marginTop:3, flexShrink:0 }} />
-      <div>
-        <div style={{ fontSize:9.5, color, fontWeight:700 }}>{label}</div>
-        <div style={{ fontSize:8.5, color:"#475569" }}>{desc}</div>
-      </div>
-    </div>
-  );
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      <Row items={[
-        <InfoBox title="Event Loop Threading Model" color="#f43f5e">
-          <BulletItem label="Netty threads — typically 16" desc="For 50K+ pkt/sec at carrier scale, shared across all handlers simultaneously" color="#f43f5e" />
-          <BulletItem label="Blocking = thread parked" desc="mongoTemplate.findOne() suspends the Netty thread on OS kernel I/O wait — unusable for any other packet" color="#ef4444" />
-          <BulletItem label="16 blocking calls = event loop dead" desc="When all 16 threads park, zero capacity remains — new RADIUS packets queue in socket buffer, then are dropped" color="#ef4444" />
-          <BulletItem label="Reactive = instant return" desc="reactiveMongoTemplate.findOne() returns Mono<> in <1ms — thread released immediately back to pool" color="#22c55e" />
-          <BulletItem label="I/O on separate pool" desc="MongoDB I/O runs on the MongoDB driver thread pool — Netty threads never wait on disk or network" color="#22c55e" />
-          <BulletItem label="Carrier throughput formula" desc="Blocking: 16 ÷ avg-DB-latency pkt/sec. Reactive: 16 × handler-rate × CPU × pipeline-depth pkt/sec" color="#06b6d4" />
-        </InfoBox>,
-        <InfoBox title="The One-Line Fix — Import Swap" color="#22c55e">
-          <div style={{ padding:"8px 12px", background:"#0d1625", borderRadius:6, border:"1px solid #ef444433", marginBottom:10 }}>
-            <div style={{ fontSize:9, color:"#ef4444", fontWeight:700, marginBottom:4 }}>❌ Blocking — Event Loop Killer</div>
-            <div style={{ fontSize:8.5, color:"#f87171", fontFamily:"monospace", lineHeight:1.8 }}>
-              {"@Autowired"}<br/>
-              {"MongoTemplate mongoTemplate;"}<br/>
-              {"// Inside WebFlux handler:"}<br/>
-              {"Subscriber s = mongoTemplate"}<br/>
-              {"  .findOne(query, Subscriber.class);"}
-            </div>
-          </div>
-          <div style={{ padding:"8px 12px", background:"#0d1625", borderRadius:6, border:"1px solid #22c55e33", marginBottom:10 }}>
-            <div style={{ fontSize:9, color:"#22c55e", fontWeight:700, marginBottom:4 }}>✅ Reactive — 50K pkt/sec</div>
-            <div style={{ fontSize:8.5, color:"#86efac", fontFamily:"monospace", lineHeight:1.8 }}>
-              {"@Autowired"}<br/>
-              {"ReactiveMongoTemplate reactiveMongoTemplate;"}<br/>
-              {"// Inside WebFlux handler:"}<br/>
-              {"Mono<Subscriber> s = reactiveMongoTemplate"}<br/>
-              {"  .findOne(query, Subscriber.class);"}
-            </div>
-          </div>
-          <BulletItem label="@Blocking annotation" desc="Spring guard — throws at startup if a @Blocking method is called inside a reactive context" color="#f59e0b" />
-          <BulletItem label="BlockHound in tests" desc="Detects any Thread.sleep() or blocking I/O in reactive chain — test fails immediately, never reaches production" color="#a855f7" />
-          <BulletItem label="Never block in subscribe()" desc="subscribe() callback runs on Netty thread — same starvation risk applies to callback code" color="#f43f5e" />
-        </InfoBox>,
+    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+      <SH text="Reactive MongoDB: Replace blocking MongoTemplate with ReactiveMongoTemplate so Netty threads never park on I/O" color="#f43f5e" />
+      <SP color="#f43f5e">
+        Spring WebFlux runs on Netty's event loop — <span style={{color:"#f43f5e"}}>16 threads handling 50,000 RADIUS packets/sec</span>. A single <span style={{color:"#ef4444"}}>blocking mongoTemplate.findOne()</span> parks one thread on kernel I/O wait. When 16 packets arrive simultaneously, all 16 threads park — the event loop is completely starved. UDP socket buffers fill, packets drop, RFC 2865 clients retransmit, and the retransmit storm compounds into complete throughput collapse.
+      </SP>
+      <BAT
+        before={[
+          "MongoTemplate.findOne() called inside WebFlux handler",
+          "Thread blocks on kernel I/O wait for MongoDB response (~5–50ms)",
+          "16 simultaneous packets → all 16 Netty threads parked",
+          "Zero capacity to accept new RADIUS packets",
+          "UDP socket buffer fills → kernel drops packets → retransmit storm → complete collapse",
+        ]}
+        after={[
+          "ReactiveMongoTemplate.findOne() returns Mono<> in under 1ms",
+          "Netty thread released immediately back to event loop pool",
+          "MongoDB I/O runs on the driver's dedicated thread pool",
+          "Callback fires on whichever Netty thread is free when I/O completes",
+          "50,000 packets/sec sustained — all 16 threads continuously available",
+        ]}
+      />
+      <PBox title="⚙️ Extra Points" color="#f59e0b" items={[
+        "@Blocking annotation: Spring throws a startup error if a @Blocking method is called inside a reactive context — caught at build time, never reaches production",
+        "BlockHound in test suite: fails immediately if any test path contains Thread.sleep() or blocking I/O inside a reactive chain",
+        "Never block inside subscribe() callback — it runs on the Netty thread and has the identical starvation risk as the handler itself",
       ]} />
-      <Interview text={`"The Netty event loop is the backbone of WebFlux throughput. Sixteen threads handle 50,000 RADIUS packets per second — but only because each handler returns in microseconds. The moment you introduce a blocking call, that thread parks on kernel I/O. Sixteen packets arrive simultaneously: sixteen threads park, zero capacity remains. Every subsequent packet queues in the UDP socket buffer until the kernel drops it. RFC 2865 clients retransmit dropped packets. The retransmit storm makes the situation worse — a positive feedback loop toward complete collapse.
-
-The fix is not architectural. It is a single import swap from MongoTemplate to ReactiveMongoTemplate. The reactive template returns a Mono<> in under a millisecond. The Netty thread is released immediately to handle the next packet. When MongoDB responds, the callback fires on whichever Netty thread is free at that moment. The event loop never accumulates debt.
-
-In production we add two guardrails: @Blocking on any method that must never be called reactively — Spring throws at startup if violated — and BlockHound in the test suite, which fails immediately if any test path parks a thread. Blocking calls in a reactive WebFlux pipeline are the most common root cause of carrier-grade throughput collapse we encounter."`} />
+      <PBox title="💡 Take Away" color="#f43f5e" items={[
+        "This is NOT an architectural change — it is a single import swap from MongoTemplate to ReactiveMongoTemplate",
+        "Blocking calls in a WebFlux reactive pipeline = most common root cause of carrier-grade throughput collapse",
+        "50K pkt/sec with 16 threads is only possible because each handler returns in microseconds — any thread parking breaks this entirely",
+      ]} />
     </div>
   );
 }
@@ -1224,47 +1216,38 @@ In production we add two guardrails: @Blocking on any method that must never be 
 // C7 INFO: Redis Failover Fallback
 // ─────────────────────────────────────────────
 function C7Info() {
-  const BulletItem = ({ label, desc, color }) => (
-    <div style={{ display:"flex", gap:8, marginBottom:7, alignItems:"flex-start" }}>
-      <div style={{ width:7, height:7, borderRadius:"50%", background:color, marginTop:3, flexShrink:0 }} />
-      <div>
-        <div style={{ fontSize:9.5, color, fontWeight:700 }}>{label}</div>
-        <div style={{ fontSize:8.5, color:"#475569" }}>{desc}</div>
-      </div>
-    </div>
-  );
-  const FailureRow = ({ scenario, window, impact, color }) => (
-    <div style={{ marginBottom:8, padding:"6px 10px", background:"#0d1625", borderRadius:6, border:`1px solid ${color}33` }}>
-      <div style={{ fontSize:9, color, fontWeight:700, marginBottom:2 }}>{scenario}</div>
-      <div style={{ fontSize:8.5, color:"#64748b", marginBottom:2 }}>Window: {window}</div>
-      <div style={{ fontSize:8.5, color }}>{impact}</div>
-    </div>
-  );
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      <Row items={[
-        <InfoBox title="Write-Through Cache Strategy" color="#f59e0b">
-          <BulletItem label="Write Redis + MongoDB together" desc="Every quota update writes both stores in the same request — ~2–5ms overhead per interim update" color="#f59e0b" />
-          <BulletItem label="Redis = speed, MongoDB = truth" desc="Redis serves 50K reads/sec at <1ms latency; MongoDB survives any Redis failure with full accuracy" color="#22c55e" />
-          <BulletItem label="Cache-miss detection" desc="Connection timeout / refused → immediately fall back to MongoDB read — never default to zero" color="#06b6d4" />
-          <BulletItem label="Redis recovery warm-up" desc="On Redis restart cache re-syncs from MongoDB automatically — no manual reconciliation needed" color="#a855f7" />
-          <BulletItem label="Billing error window: ZERO" desc="MongoDB always holds accurate quota_used — fallback is instant and correct regardless of outage duration" color="#22c55e" />
-          <BulletItem label="Delta safety check" desc="If fallback quota_used > new reported value, discard — prevents negative delta billing from stale CDRs" color="#f59e0b" />
-        </InfoBox>,
-        <InfoBox title="Failure Window Analysis" color="#ef4444">
-          <FailureRow scenario="Redis-only (no fallback)" window="5–30 sec outage" impact="→ quota_used defaults to 0 → full quota appears free → 10GB overrun per subscriber" color="#ef4444" />
-          <FailureRow scenario="Write-through + MongoDB fallback" window="Same outage duration" impact="→ MongoDB always current → correct quota read → no enforcement gap, zero revenue loss" color="#22c55e" />
-          <FailureRow scenario="Read-through (lazy write)" window="Any write before outage" impact="→ last MongoDB write may be stale → partial quota loss still possible in crash window" color="#f59e0b" />
-          <FailureRow scenario="Redis Sentinel auto-failover" window="<5 sec switchover" impact="→ reduces window but does not eliminate it — write-through still required for safety" color="#06b6d4" />
-        </InfoBox>,
+    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+      <SH text="Write-Through Cache: Write quota_used to Redis AND MongoDB together so any Redis outage falls back to accurate MongoDB state immediately" color="#f59e0b" />
+      <SP color="#f59e0b">
+        Redis provides <span style={{color:"#f59e0b"}}>sub-millisecond quota reads at 50,000 packets/sec</span>, but it is volatile — a rolling cluster upgrade, network partition, or memory eviction drops state in seconds. Without a fallback, a cache miss <span style={{color:"#ef4444"}}>defaults quota_used = 0</span>, making the subscriber appear to have a fresh full quota. The subscriber accumulates 10GB unmetered: operator delivers 18GB, bills for 10GB — silent revenue leakage.
+      </SP>
+      <BAT
+        before={[
+          "Redis holds quota_used = 8GB for active subscriber",
+          "Redis rolling upgrade → 5–30 sec cluster outage",
+          "RADIUS Interim-Update arrives → cache lookup → connection timeout",
+          "AAA defaults quota_used = 0 — subscriber appears to have full quota",
+          "BNG told to continue — subscriber uses 10GB unmetered → CDR: 10GB billed, 18GB delivered",
+        ]}
+        after={[
+          "Every quota update written to Redis + MongoDB simultaneously (~2–5ms overhead)",
+          "Redis outage → cache miss → immediately fall back to MongoDB read",
+          "MongoDB holds accurate quota_used from all prior write-through writes",
+          "Correct quota enforcement applied — zero revenue leakage",
+          "Redis recovers → re-syncs from MongoDB automatically, no manual intervention",
+        ]}
+      />
+      <PBox title="⚙️ Extra Points" color="#06b6d4" items={[
+        "Redis = speed (sub-1ms, 50K reads/sec). MongoDB = truth (survives any Redis failure, always current from write-through)",
+        "Delta safety check: if MongoDB quota_used > new reported value, discard — prevents negative delta billing from stale CDRs",
+        "Redis Sentinel auto-failover reduces window to <5 sec but does NOT eliminate the gap — write-through is still required for safety",
       ]} />
-      <Interview text={`"Redis gives us sub-millisecond session reads — critical when processing 50,000 RADIUS packets per second. But Redis is volatile by design: a rolling cluster upgrade, a network partition, or memory pressure eviction can drop session state in seconds. This is an operational reality in every carrier deployment.
-
-Without a fallback, the AAA Server defaults quota_used to zero on a cache miss. The subscriber's quota appears completely fresh. BNG receives an ACK, the session continues unrestricted, and the subscriber accumulates gigabytes beyond their plan limit. The CDR closes with the ghost session data — the operator delivers 18GB and bills for 10GB. Silent revenue leakage at carrier scale.
-
-Write-through caching treats MongoDB as the system of record for quota state. Every interim-update write goes to Redis and MongoDB together. When Redis fails, the fallback reads MongoDB and gets the accurate current value immediately. The billing error window is zero — not 5 seconds, not 30 seconds: zero. The 2–5ms write overhead per update is the cost, and it is completely acceptable at our packet rate.
-
-On recovery, Redis re-syncs from MongoDB automatically. No manual intervention, no reconciliation job, no Revenue Assurance ticket from a billing discrepancy."`} />
+      <PBox title="💡 Take Away" color="#f59e0b" items={[
+        "Billing error window with write-through: ZERO — not 5 seconds, not 30 seconds: zero",
+        "Write-through overhead: ~2–5ms per interim update — completely acceptable at carrier packet rates",
+        "This exact write-through + MongoDB-fallback pattern is reused for prevTotal storage in Gigawords handling (C8)",
+      ]} />
     </div>
   );
 }
@@ -1274,65 +1257,37 @@ On recovery, Redis re-syncs from MongoDB automatically. No manual intervention, 
 // ─────────────────────────────────────────────
 function C8Info() {
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      <Row items={[
-        <InfoBox title="32-bit Overflow Table — Service Provider Fiber" color="#e879f9">
-          <div style={{ fontSize:9.5, color:"#94a3b8", lineHeight:1.7, marginBottom:10 }}>
-            Acct-Output-Octets is 32-bit → max 4,294,967,295 bytes (4GB). At Service Provider speeds:
-          </div>
-          {[
-            { speed:"30 Mbps",  time:"18 minutes",  note:"Wraps once per typical interim interval", color:"#22c55e" },
-            { speed:"100 Mbps", time:"5.5 minutes",  note:"Wraps 3–4× per 20-min interval", color:"#f59e0b" },
-            { speed:"300 Mbps", time:"1.8 minutes",  note:"Wraps 11× in 20 min — every calculation risks overflow", color:"#ef4444" },
-            { speed:"1 Gbps",   time:"32 seconds",   note:"Enterprise plans — counter nearly always wrapping", color:"#ef4444" },
-          ].map(it => (
-            <div key={it.speed} style={{ marginBottom:7, padding:"6px 10px", background:"#0d1625", borderRadius:6, border:`1px solid ${it.color}33` }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <span style={{ fontSize:9.5, color:it.color, fontWeight:700 }}>{it.speed}</span>
-                <span style={{ fontSize:9.5, color:"#e879f9", fontWeight:700 }}>Every {it.time}</span>
-              </div>
-              <div style={{ fontSize:8.5, color:"#475569", marginTop:2 }}>{it.note}</div>
-            </div>
-          ))}
-          <div style={{ marginTop:8, padding:"6px 10px", background:"#0d1625", borderRadius:6, border:"1px solid #22c55e33" }}>
-            <div style={{ fontSize:9, color:"#22c55e", fontWeight:700, marginBottom:4 }}>RFC 2869 Gigawords Formula</div>
-            <div style={{ fontSize:8.5, color:"#67e8f9", fontFamily:"monospace" }}>trueTotal = (Gigawords × 4,294,967,296) + Octets</div>
-          </div>
-        </InfoBox>,
-        <InfoBox title="Why Commutative Matters for OCS" color="#22c55e">
-          <div style={{ fontSize:9.5, color:"#94a3b8", lineHeight:1.7, marginBottom:10 }}>
-            AAA Server sends delta (+500MB) to OCS — not absolute total. This makes OCS operations order-independent.
-          </div>
-          {[
-            { label:"Delta, not absolute", desc:"balance = balance - delta. This is commutative — order of processing doesn't matter", color:"#22c55e" },
-            { label:"No row locks at OCS", desc:"Thousands of concurrent delta operations process without contention — no Lost Update risk", color:"#22c55e" },
-            { label:"Redis + MongoDB write-through", desc:"prevTotal saved to both stores — Redis for speed, MongoDB for failover safety", color:"#e879f9" },
-            { label:"Negative delta = bug signal", desc:"If delta < 0 after Gigawords math, it signals a session reset or BNG restart — handle as new session", color:"#f59e0b" },
-          ].map(it => (
-            <div key={it.label} style={{ display:"flex", gap:8, marginBottom:7, alignItems:"flex-start" }}>
-              <div style={{ width:7, height:7, borderRadius:"50%", background:it.color, marginTop:3, flexShrink:0 }} />
-              <div>
-                <div style={{ fontSize:9.5, color:it.color, fontWeight:700 }}>{it.label}</div>
-                <div style={{ fontSize:8.5, color:"#475569" }}>{it.desc}</div>
-              </div>
-            </div>
-          ))}
-          <div style={{ marginTop:8, padding:"6px 10px", background:"#0d1625", borderRadius:6, border:"1px solid #ef444433" }}>
-            <div style={{ fontSize:9, color:"#ef4444", fontWeight:700, marginBottom:4 }}>Without Gigawords — The Failure Math</div>
-            <div style={{ fontSize:8.5, color:"#f87171", fontFamily:"monospace", lineHeight:1.7 }}>
-              prevTotal = 3,800,000,000<br/>
-              currOctets = 200,000,000 (wrapped!)<br/>
-              delta = 200M - 3,800M = -3,600,000,000<br/>
-              Clamped to 0 → subscriber uses 700MB FREE
-            </div>
-          </div>
-        </InfoBox>,
+    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+      <SH text="RFC 2869 Gigawords: Combine 32-bit Octet counter with Gigawords for true 64-bit total; send relative deltas to OCS for lock-free commutative deductions" color="#e879f9" />
+      <SP color="#e879f9">
+        RADIUS <span style={{color:"#e879f9"}}>Acct-Output-Octets is a 32-bit counter</span> — max 4GB. At 300Mbps it wraps every 1.8 minutes. Without Gigawords, the post-wrap counter (200MB) minus the pre-wrap total (3,800MB) gives a large <span style={{color:"#ef4444"}}>negative number, clamped to zero</span> — OCS receives zero usage and the subscriber uses data for free. With Gigawords, the true 64-bit total is always correct.
+      </SP>
+      <BAT
+        before={[
+          "BNG sends cumulative Acct-Output-Octets (32-bit): wraps at 4,294,967,295 bytes",
+          "At 300Mbps: wraps every 1.8 min — 11 wraps in a 20-min interval",
+          "After wrap: prevTotal=3,800MB, currOctets=200MB",
+          "delta = 200M − 3,800M = −3.6B → clamped to 0",
+          "OCS receives 0 usage → no deduction → subscriber uses 700MB free",
+        ]}
+        after={[
+          "trueTotal = (Gigawords × 4,294,967,296) + Octets",
+          "Delta is always positive and correct regardless of wrap count",
+          "AAA sends relative delta to OCS: balance = balance − delta",
+          "Delta operation is commutative — order-independent, no row locks at OCS",
+          "Thousands of concurrent OCS deductions process without contention",
+        ]}
+      />
+      <PBox title="⚙️ Extra Points" color="#06b6d4" items={[
+        "Counter wrap frequency: 30Mbps → 18min, 100Mbps → 5.5min, 300Mbps → 1.8min, 1Gbps → 32sec — mandatory handling at SP Fiber speeds",
+        "prevTotal stored in Redis (fast lookup) with write-through to MongoDB (failover) — same pattern as session quota cache (C7)",
+        "Negative delta after Gigawords math = BNG restart or session reset → discard and treat as new session start",
       ]} />
-      <Interview text={`"Per RFC 2866, BNG always sends cumulative octets since session start. At 300Mbps Service Provider Fiber speed, the 32-bit counter wraps every 1.8 minutes — in a 20-minute interval it wraps 11 times. RFC 2869 Gigawords handling is mandatory, not optional.
-
-AAA Server calculates delta using the Gigawords-aware formula and proxies only the delta to OCS. Because we send relative deltas, not absolute totals, the OCS operation 'balance = balance - delta' is commutative — order doesn't matter, no row locks needed. OCS processes thousands of concurrent deductions without contention.
-
-The previous cumulative total is stored in Redis for fast lookup, with write-through to MongoDB for failover safety. If Redis fails, the fallback reads MongoDB and the delta calculation remains correct. This is the same write-through pattern we use for session quota state."`} />
+      <PBox title="💡 Take Away" color="#e879f9" items={[
+        "RFC 2869 Gigawords is mandatory, not optional — at SP Fiber speeds, 32-bit counter wraps constantly",
+        "Commutative delta design eliminates row locking at OCS — this is the key to carrier-scale OCS throughput",
+        "Two independent problems solved together: overflow correctness (Gigawords) and concurrency safety (relative deltas)",
+      ]} />
     </div>
   );
 }
@@ -1342,64 +1297,38 @@ The previous cumulative total is stored in Redis for fast lookup, with write-thr
 // ─────────────────────────────────────────────
 function C9Info() {
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      <Row items={[
-        <InfoBox title="Risk Classification Logic" color="#8b5cf6">
-          <div style={{ padding:"8px 12px", background:"#0d1625", borderRadius:6, border:"1px solid #8b5cf633", marginBottom:10 }}>
-            <div style={{ fontSize:9, color:"#8b5cf6", fontWeight:700, marginBottom:4 }}>isHighRisk() — Java</div>
-            <div style={{ fontSize:8.5, color:"#c4b5fd", fontFamily:"monospace", lineHeight:1.8 }}>
-              {"profile.getPlanType().equals(\"PREPAID\")"}<br/>
-              {"  && profile.getBalanceBytes() < TEN_GB;"}
-            </div>
-          </div>
-          {[
-            { label:"HIGH RISK → Sync", desc:"Prepaid + low balance. Synchronous RADIUS proxy to OCS. Zero revenue leakage tolerance.", color:"#ef4444" },
-            { label:"LOW RISK → Async", desc:"Postpaid (any balance). Async Kafka to CDR system. Eventual consistency acceptable.", color:"#22c55e" },
-            { label:"Profile from MongoDB", desc:"SubscriberProfile read before routing — planType and balanceBytes determine the path", color:"#8b5cf6" },
-            { label:"Deliberate business choice", desc:"We actively ACCEPT eventual consistency for 90% of subscribers — not a workaround, a strategy", color:"#f59e0b" },
-          ].map(it => (
-            <div key={it.label} style={{ display:"flex", gap:8, marginBottom:7, alignItems:"flex-start" }}>
-              <div style={{ width:7, height:7, borderRadius:"50%", background:it.color, marginTop:3, flexShrink:0 }} />
-              <div>
-                <div style={{ fontSize:9.5, color:it.color, fontWeight:700 }}>{it.label}</div>
-                <div style={{ fontSize:8.5, color:"#475569" }}>{it.desc}</div>
-              </div>
-            </div>
-          ))}
-        </InfoBox>,
-        <InfoBox title="Throughput Impact — Service Provider Scale" color="#22c55e">
-          {[
-            { scenario:"Without By Value", metric:"50M subscribers → ALL sync OCS", result:"OCS bottleneck at 50K/sec → system collapse", color:"#ef4444" },
-            { scenario:"With By Value", metric:"90% postpaid → async Kafka\n10% prepaid → sync OCS", result:"OCS load: 5K/sec (within capacity) → 10× improvement", color:"#22c55e" },
-          ].map(it => (
-            <div key={it.scenario} style={{ marginBottom:10, padding:"8px 10px", background:"#0d1625", borderRadius:6, border:`1px solid ${it.color}33` }}>
-              <div style={{ fontSize:9.5, color:it.color, fontWeight:700, marginBottom:4 }}>{it.scenario}</div>
-              <div style={{ fontSize:8.5, color:"#94a3b8", marginBottom:2, whiteSpace:"pre-line" }}>{it.metric}</div>
-              <div style={{ fontSize:8.5, color:it.color }}>{it.result}</div>
-            </div>
-          ))}
-          <div style={{ marginTop:4 }}>
-            {[
-              { label:"Postpaid → Kafka → CDR", desc:"Fire-and-forget: AAA publishes delta to Kafka partition. CDR system deducts offline. Thread free in <1ms.", color:"#22c55e" },
-              { label:"Prepaid → RADIUS proxy → OCS", desc:"Synchronous: AAA waits for OCS response. Thread held ~50–200ms. But only 10% of traffic.", color:"#f59e0b" },
-              { label:"OCS response drives action", desc:"OCS may signal: normal, threshold crossed (50%/90%), or quota exhausted (100%) → separate handling", color:"#0ea5e9" },
-            ].map(it => (
-              <div key={it.label} style={{ display:"flex", gap:8, marginBottom:6, alignItems:"flex-start" }}>
-                <div style={{ width:7, height:7, borderRadius:"50%", background:it.color, marginTop:3, flexShrink:0 }} />
-                <div>
-                  <div style={{ fontSize:9, color:it.color, fontWeight:700 }}>{it.label}</div>
-                  <div style={{ fontSize:8.5, color:"#475569" }}>{it.desc}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </InfoBox>,
+    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+      <SH text="By Value Routing: Route 10% prepaid low-balance to sync OCS; 90% postpaid to async Kafka CDR — 10× OCS throughput improvement" color="#8b5cf6" />
+      <SP color="#8b5cf6">
+        Without routing differentiation, all <span style={{color:"#ef4444"}}>50M subscribers require synchronous OCS calls</span> on every RADIUS Interim-Update. OCS is designed for 5,000 sync calls/sec — at 50,000/sec it collapses immediately. By Value reads the subscriber profile and routes by actual risk: prepaid with low balance has zero revenue leakage tolerance; postpaid reconciles at billing cycle close.
+      </SP>
+      <BAT
+        before={[
+          "All 50M subscribers → synchronous RADIUS proxy to OCS on every Interim-Update",
+          "OCS designed for 5,000 sync calls/sec",
+          "Actual load: 50,000 calls/sec → OCS becomes the bottleneck",
+          "Complete system collapse — no prepaid/postpaid distinction made",
+          "No separation between revenue-risk and billing-safe subscribers",
+        ]}
+        after={[
+          "isHighRisk(): PREPAID + balanceBytes < 10GB → ~10% of 50M subscribers",
+          "High risk → sync RADIUS proxy to OCS → real-time enforcement, zero revenue leakage",
+          "Low risk → async Kafka → CDR system deducts at billing cycle close",
+          "OCS sync load reduced to 5,000/sec — within designed capacity",
+          "10× throughput improvement — sustainable at carrier scale",
+        ]}
+      />
+      <PBox title="⚙️ Extra Points" color="#0ea5e9" items={[
+        "isHighRisk() logic: planType.equals(\"PREPAID\") && balanceBytes < TEN_GB; SubscriberProfile read from MongoDB before routing decision",
+        "Postpaid → Kafka: fire-and-forget, AAA thread free in under 1ms, CDR system processes offline at billing cycle close",
+        "Prepaid → RADIUS proxy: synchronous, AAA thread held 50–200ms, but only 10% of total traffic so OCS stays within capacity",
+        "OCS response for the high-risk path drives further action: Normal ACK, threshold 50%/90%, or quota exhausted 100% — handled by C10",
       ]} />
-      <Interview text={`"By Value is our most important performance decision. We actively ACCEPT eventual consistency for 90% of postpaid subscribers — that is a deliberate business choice, not a technical workaround. The 10% prepaid with low balances get synchronous OCS calls because we have zero tolerance for revenue leakage on prepaid.
-
-Without this routing decision, we would need synchronous OCS calls for all 50 million subscribers. The OCS is designed for 5,000 synchronous calls per second — not 50,000. It would collapse immediately. By Value reduces OCS sync load by 90%, keeping it well within capacity while guaranteeing zero revenue leakage for the subscribers where it matters most.
-
-The key insight: eventual consistency is perfectly acceptable for postpaid subscribers because they are billed monthly and any delta discrepancy reconciles at billing cycle close. Prepaid subscribers spend their own pre-loaded balance — every megabyte must be accounted for in real time."`} />
+      <PBox title="💡 Take Away" color="#8b5cf6" items={[
+        "We ACTIVELY ACCEPT eventual consistency for 90% of subscribers — this is a deliberate business strategy, not a technical workaround",
+        "Prepaid subscribers spend their own pre-loaded balance — every megabyte must be accounted for in real time",
+        "This routing decision reduces OCS load from 50K/sec (collapse) to 5K/sec (sustainable) — a 10× improvement with one classification check",
+      ]} />
     </div>
   );
 }
@@ -1409,62 +1338,37 @@ The key insight: eventual consistency is perfectly acceptable for postpaid subsc
 // ─────────────────────────────────────────────
 function C10Info() {
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      <Row items={[
-        <InfoBox title="Four OCS Response Outcomes" color="#0ea5e9">
-          {[
-            { outcome:"Async (Postpaid)", signal:"No OCS response", action:"Mono.empty() — nothing to handle", coa:"None", color:"#64748b" },
-            { outcome:"Normal ACK", signal:"ACK, no indicators", action:"Forward ACK to BNG, wait for next interim", coa:"None", color:"#22c55e" },
-            { outcome:"Threshold Crossed (50%/90%)", signal:"VSA: threshold_crossed", action:"Idempotent $addToSet check → SMS if new", coa:"NO CoA — speed unchanged", color:"#f59e0b" },
-            { outcome:"Quota Exhausted (100%)", signal:"VSA: quota_exhausted", action:"state=QUOTA_EXHAUSTED → CoA Type 2 → wait CoA-ACK → THEN notify", coa:"CoA Type 2: 1Mbps FUP", color:"#ef4444" },
-          ].map(it => (
-            <div key={it.outcome} style={{ marginBottom:8, padding:"8px 10px", background:"#0d1625", borderRadius:6, border:`1px solid ${it.color}33` }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
-                <span style={{ fontSize:9.5, color:it.color, fontWeight:700 }}>{it.outcome}</span>
-                <span style={{ fontSize:8, color:it.color, background:`${it.color}18`, padding:"2px 6px", borderRadius:4 }}>{it.coa}</span>
-              </div>
-              <div style={{ fontSize:8.5, color:"#64748b", marginBottom:2 }}>Signal: {it.signal}</div>
-              <div style={{ fontSize:8.5, color:"#94a3b8" }}>{it.action}</div>
-            </div>
-          ))}
-        </InfoBox>,
-        <InfoBox title="Critical Distinction — Threshold ≠ Exhaustion" color="#ef4444">
-          <div style={{ marginBottom:10 }}>
-            <div style={{ fontSize:9, color:"#f59e0b", fontWeight:700, marginBottom:6 }}>50% / 90% — Notify Only</div>
-            {[
-              { text:"SMS notification sent to subscriber", color:"#f59e0b" },
-              { text:"NO CoA to BNG — speed stays the same", color:"#22c55e" },
-              { text:"$addToSet ensures exactly-once SMS per threshold", color:"#14b8a6" },
-              { text:"Confusing this with exhaustion → false throttle at 50%!", color:"#ef4444" },
-            ].map((it,i) => (
-              <div key={i} style={{ fontSize:8.5, color:it.color+"cc", marginBottom:3, display:"flex", gap:6 }}>
-                <span style={{ color:it.color, flexShrink:0 }}>•</span>{it.text}
-              </div>
-            ))}
-          </div>
-          <div>
-            <div style={{ fontSize:9, color:"#ef4444", fontWeight:700, marginBottom:6 }}>100% — Enforce + Notify (Pessimistic View)</div>
-            {[
-              { text:"state = QUOTA_EXHAUSTED saved to MongoDB", color:"#ef4444" },
-              { text:"CoA Type 2: throttle to 1Mbps FUP speed → BNG", color:"#ef4444" },
-              { text:"Wait for CoA-ACK from BNG (hardware confirmed)", color:"#0ea5e9" },
-              { text:"ONLY THEN publish ThresholdCrossedEvent → SMS", color:"#22c55e" },
-              { text:"Missing enforcement at 100% → subscriber uses data free!", color:"#ef4444" },
-            ].map((it,i) => (
-              <div key={i} style={{ fontSize:8.5, color:it.color+"cc", marginBottom:3, display:"flex", gap:6 }}>
-                <span style={{ color:it.color, flexShrink:0 }}>•</span>{it.text}
-              </div>
-            ))}
-          </div>
-        </InfoBox>,
+    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+      <SH text="Four Distinct Response Paths: ACK = wait, Threshold = notify only, Exhausted = enforce then notify, Async = skip — never confuse threshold with exhaustion" color="#0ea5e9" />
+      <SP color="#0ea5e9">
+        OCS returns four signals after quota evaluation. Each requires a completely different action from AAA Server. The most dangerous confusion is <span style={{color:"#f59e0b"}}>threshold (50%/90%) vs exhaustion (100%)</span> — threshold is <span style={{color:"#f59e0b"}}>notify-only with NO CoA</span>, while exhaustion requires <span style={{color:"#ef4444"}}>CoA enforcement before any notification</span>. Swapping these causes false throttle at 50% or unmetered usage at 100%.
+      </SP>
+      <BAT
+        before={[
+          "All OCS non-ACK responses treated the same",
+          "CoA sent at 50% threshold → subscriber throttled with half quota remaining",
+          "OR: No CoA sent at 100% → subscriber uses data past quota for free",
+          "Notification published before CoA-ACK → violates Pessimistic View",
+          "SMS says 'throttled' but BNG hardware may not have applied it yet",
+        ]}
+        after={[
+          "Normal ACK: forward to BNG, wait for next Interim-Update, nothing else",
+          "Threshold 50%/90%: idempotent $addToSet SMS only — NO CoA, NO speed change",
+          "Quota Exhausted 100%: state=QUOTA_EXHAUSTED → CoA Type 2 (1Mbps) → wait CoA-ACK → THEN publish SMS event",
+          "Async postpaid path: Mono.empty() — no OCS response to handle",
+          "Each path completely isolated — no cross-contamination between response types",
+        ]}
+      />
+      <PBox title="⚙️ Extra Points" color="#f59e0b" items={[
+        "$addToSet on threshold notifications: exactly-once SMS per threshold level — idempotent on retries and on duplicate OCS signals",
+        "Quota Exhausted path applies Pessimistic View: SMS notification event published only AFTER throttle CoA-ACK received from BNG",
+        "CoA Type 2 FUP speed (1Mbps) is defined by operator policy per subscriber plan, not hardcoded in AAA Server logic",
       ]} />
-      <Interview text={`"OCS response handling is where all the Flow 2 concepts converge. The OCS has four possible responses, and each demands a completely different action from AAA Server.
-
-Normal ACK: do nothing, forward to BNG, wait for next interim. Threshold crossed at 50% or 90%: send an idempotent SMS notification using $addToSet — but critically, NO CoA, NO speed change. The subscriber still has data remaining. Quota exhausted at 100%: this is the enforcement path — update state to QUOTA_EXHAUSTED, send CoA Type 2 to BNG with FUP speed of 1Mbps, wait for CoA-ACK confirming hardware throttled, and only then publish the notification event for SMS.
-
-The most dangerous confusion is between threshold and exhaustion. If you send a CoA at 50%, you have throttled a subscriber who still has half their data. If you skip enforcement at 100%, the subscriber uses data for free. And if you notify before CoA-ACK at 100%, you violate Pessimistic View — the SMS says 'throttled' but BNG may not have applied it yet.
-
-OCS is the decision maker for all quota matters. AAA Server never independently decides to throttle — it reads the OCS signal via RADIUS accounting-response VSA attribute and enforces accordingly."`} />
+      <PBox title="💡 Take Away" color="#0ea5e9" items={[
+        "OCS = Decision Maker for all quota matters. AAA Server = Enforcer. BNG = Hardware owner. AAA never independently throttles",
+        "All four Flow 2 concepts converge here: By Value routing (C9), Pessimistic View (C4), Commutative deltas (C8), Redis cache fallback (C7)",
+        "The $addToSet idempotency guard at threshold is easy to miss and critical — without it, subscribers get duplicate SMSes on every retry",
+      ]} />
     </div>
   );
 }
